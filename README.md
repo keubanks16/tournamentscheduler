@@ -14,7 +14,6 @@ A standalone tournament manager built with HTML/CSS/JavaScript. No server or dat
 - Reorderable tiebreakers: win %, run differential, runs scored, runs allowed
 - Overall tournament seeding
 - Configurable Gold bracket size
-- Optional Silver bracket for remaining teams
 - Automatic byes and tap-to-advance bracket winners
 - Local browser autosave
 - Mobile friendly
