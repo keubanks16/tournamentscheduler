@@ -1,29 +1,30 @@
 # Tournament Pool & Bracket Manager
 
-A zero-backend tournament manager built with plain HTML, CSS, and JavaScript. It works on GitHub Pages.
+A standalone tournament manager built with HTML/CSS/JavaScript. No server or database required.
 
 ## Features
 - Add any list of teams
-- Choose 1–8 pools
-- Random, even pool draw
-- Re-draw pools
-- Automatic round-robin pool games
-- Score entry
-- Live W/L/T, runs for, runs against, run differential, and win percentage
+- 1–8 pools
+- Animated random pool draw / reveal
+- Move teams between pools after the draw
+- Set pool games per team or full round robin
+- Automatic field and game-time scheduling
+- Editable game times and field assignments
+- Score entry and automatic standings
+- Reorderable tiebreakers: win %, run differential, runs scored, runs allowed
 - Overall tournament seeding
-- Automatic single-elimination bracket with byes
-- Tap winners to advance them
-- Tournament champion display
-- Local browser save
-- Mobile-friendly
+- Configurable Gold bracket size
+- Optional Silver bracket for remaining teams
+- Automatic byes and tap-to-advance bracket winners
+- Local browser autosave
+- Mobile friendly
+- GitHub Pages compatible
 
-## Put it on GitHub Pages
-1. Create a new GitHub repository.
+## GitHub Pages
+1. Create a GitHub repository.
 2. Upload `index.html`, `style.css`, and `app.js` to the repository root.
-3. Open **Settings → Pages**.
-4. Under **Build and deployment**, choose **Deploy from a branch**.
-5. Select `main` and `/ (root)`, then Save.
-6. GitHub will provide the public URL after deployment.
+3. Open repository Settings → Pages.
+4. Deploy from the `main` branch/root folder.
+5. GitHub will provide the public URL.
 
-## Notes
-Tournament data is stored in the browser using localStorage. It does not sync between devices yet.
+Tournament data is stored in the browser on the device being used. It is not synced between devices.

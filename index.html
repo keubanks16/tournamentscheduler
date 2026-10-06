@@ -1,24 +1,10 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tournament Pool & Bracket Manager</title>
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-<header><div><h1>⚾ Tournament Manager</h1><p>Random pools • Pool play • Standings • Championship bracket</p></div><button id="resetBtn" class="danger">Reset Tournament</button></header>
-<main>
-<section class="card setup">
-<h2>1. Tournament Setup</h2>
-<div class="grid2"><label>Tournament Name<input id="tournamentName" placeholder="Fall Classic"></label><label>Number of Pools<select id="poolCount"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></label></div>
-<label>Teams <span class="muted">(one per line)</span><textarea id="teamsInput" rows="10" placeholder="GS Baseball\nDirtdogs\nBandits\nTitans"></textarea></label>
-<div class="actions"><button id="drawBtn" class="primary">🎲 Random Pool Draw</button><button id="sampleBtn">Load Sample Teams</button></div><p id="setupMsg" class="msg" aria-live="polite"></p>
-</section>
-<section id="poolsSection" class="card hidden"><div class="sectionHead"><div><h2>2. Pool Draw</h2><p class="muted">Teams are shuffled randomly and distributed as evenly as possible.</p></div><button id="redrawBtn">🔀 Re-draw</button></div><div id="pools" class="poolGrid"></div><div class="actions"><button id="gamesBtn" class="primary">Create Pool Games</button></div></section>
-<section id="gamesSection" class="card hidden"><div class="sectionHead"><div><h2>3. Pool Play</h2><p class="muted">Enter scores. Standings update automatically.</p></div></div><div id="games"></div></section>
-<section id="standingsSection" class="card hidden"><div class="sectionHead"><div><h2>4. Standings</h2><p class="muted">Ranked by win %, run differential, runs scored, then team name.</p></div><button id="bracketBtn" class="primary">Build Championship Bracket</button></div><div id="standings"></div></section>
-<section id="bracketSection" class="card hidden"><div class="sectionHead"><div><h2>5. Championship Bracket</h2><p class="muted">Top overall seeds advance to a power-of-two single elimination bracket. Byes are added automatically.</p></div><button id="rebuildBracketBtn">Rebuild From Current Standings</button></div><div id="bracket" class="bracketWrap"></div><div id="champion" class="champion hidden"></div></section>
-</main>
-<footer>Runs entirely in your browser. Tournament data is saved on this device.</footer>
-<script src="app.js"></script>
-</body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tournament Pool & Bracket Manager</title><link rel="stylesheet" href="style.css"></head><body>
+<header><div><h1>⚾ Tournament Manager</h1><p>Random draw • Scheduling • Live standings • Gold & Silver brackets</p></div><button id="resetBtn" class="danger">Reset Tournament</button></header><main>
+<section class="card setup"><h2>1. Tournament Setup</h2><div class="grid2"><label>Tournament Name<input id="tournamentName" placeholder="Fall Classic"></label><label>Number of Pools<select id="poolCount"></select></label><label>Pool Games / Team<select id="gamesPerTeam"><option value="0">Full round robin</option><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label><label>Number of Fields<input id="fieldCount" type="number" min="1" max="20" value="2"></label><label>First Game Time<input id="startTime" type="time" value="09:00"></label><label>Game Slot (minutes)<input id="slotMinutes" type="number" min="15" max="240" step="5" value="75"></label></div>
+<label>Teams <span class="muted">(one per line)</span><textarea id="teamsInput" rows="10" placeholder="GS Baseball\nDirtdogs\nBandits\nTitans"></textarea></label><div class="actions"><button id="drawBtn" class="primary">🎲 Start Random Draw</button><button id="sampleBtn">Load Sample Teams</button></div><p id="setupMsg" class="msg" aria-live="polite"></p></section>
+<section id="drawStage" class="card hidden"><div class="sectionHead"><div><h2>Random Pool Selection</h2><p class="muted">Teams are revealed one at a time.</p></div><button id="skipDrawBtn">Reveal All</button></div><div id="drawTeam" class="drawTeam">Ready…</div><div id="drawPools" class="poolGrid"></div></section>
+<section id="poolsSection" class="card hidden"><div class="sectionHead"><div><h2>2. Pools</h2><p class="muted">Move teams between pools before creating the schedule.</p></div><button id="redrawBtn">🔀 Re-draw</button></div><div id="pools" class="poolGrid"></div><div class="actions"><button id="gamesBtn" class="primary">Create Pool Schedule</button></div></section>
+<section id="gamesSection" class="card hidden"><div class="sectionHead"><div><h2>3. Pool Play Schedule</h2><p class="muted">Enter scores or adjust field and time assignments.</p></div></div><div id="games"></div></section>
+<section id="standingsSection" class="card hidden"><div class="sectionHead"><div><h2>4. Standings & Seeding</h2><p class="muted">Choose the tiebreaker order used for pool and overall rankings.</p></div></div><div class="tiePanel"><strong>Tiebreakers</strong><div id="tieBreakers"></div><span class="muted small">Use ↑ ↓ to change priority.</span></div><div id="standings"></div><div class="bracketConfig"><h3>Bracket Setup</h3><div class="grid2"><label>Gold Bracket Teams<input id="goldCount" type="number" min="2" value="4"></label><label>Silver Bracket<select id="silverEnabled"><option value="yes">Yes — remaining teams</option><option value="no">No</option></select></label></div><div class="actions"><button id="bracketBtn" class="primary">Build Brackets</button></div></div></section>
+<section id="bracketSection" class="card hidden"><div class="sectionHead"><div><h2>5. Tournament Brackets</h2><p class="muted">Tap a team to advance it. Byes advance automatically.</p></div><button id="rebuildBracketBtn">Rebuild From Standings</button></div><div id="brackets"></div></section>
+</main><footer>Runs entirely in your browser • Data saves automatically on this device • GitHub Pages ready</footer><script src="app.js"></script></body></html>
