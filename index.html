@@ -6,6 +6,13 @@
 <title>Tournament Manager</title>
 <meta name="description" content="Random pool draw, field scheduling, live standings and a championship bracket for baseball tournaments.">
 <meta name="theme-color" content="#0a2342">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tournament">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&display=swap">
@@ -29,6 +36,7 @@
           <span>Menu</span>
         </button>
         <div id="menu" class="menu" role="menu" hidden>
+          <button role="menuitem" data-act="install" class="needs-browser">Add to Home Screen</button>
           <button role="menuitem" data-act="copy">Copy schedule as text</button>
           <button role="menuitem" data-act="share" class="needs-top">Share a view-only link</button>
           <button role="menuitem" data-act="print" class="needs-top">Print this page</button>
@@ -208,6 +216,39 @@
     <div class="actions end">
       <button class="btn" id="modalCancel" type="button">Cancel</button>
       <button class="btn btn-primary" id="modalOk" type="button">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Install sheet -->
+<div id="installSheet" class="overlay" hidden>
+  <div class="modal-card install-card" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+    <div class="install-head">
+      <img src="icons/apple-touch-icon.png" alt="" width="60" height="60">
+      <div><h2 id="installTitle" class="h-card">Get the app</h2><p class="note">Opens full screen and works offline at the field.</p></div>
+    </div>
+    <div id="installIOS">
+      <h3 class="h-sub">On iPhone or iPad (Safari)</h3>
+      <ol class="install-steps">
+        <li>Tap the <b>Share</b> button <svg class="ios-share" viewBox="0 0 24 24" width="18" height="18" aria-label="Share icon"><path fill="currentColor" d="M12 2 7.8 6.2l1.4 1.4L11 5.8V15h2V5.8l1.8 1.8 1.4-1.4L12 2ZM5 10v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10h-3v2h1v8H7v-8h1v-2H5Z"/></svg> at the bottom of the screen.</li>
+        <li>Scroll down and tap <b>Add to Home Screen</b>.</li>
+        <li>Tap <b>Add</b>.</li>
+      </ol>
+      <h3 class="h-sub">Or use the installer file</h3>
+      <p class="note">Tap the button below, then open <b>Settings</b>, tap <b>Profile Downloaded</b> near the top, and tap <b>Install</b>. The file only adds the app icon.</p>
+      <div class="actions"><a class="btn" href="Tournament.mobileconfig" id="profileLink">Download installer</a></div>
+    </div>
+    <div id="installOther" hidden>
+      <h3 class="h-sub">On Android (Chrome)</h3>
+      <p class="note">Tap the <b>⋮</b> menu, then <b>Install app</b> or <b>Add to Home screen</b>.</p>
+      <h3 class="h-sub">On a computer (Chrome or Edge)</h3>
+      <p class="note">Click the install icon at the right end of the address bar.</p>
+    </div>
+    <p class="note">The app keeps its own copy of your tournament. To move one you started in the browser, use Menu → Download backup there, then Menu → Restore from backup in the app.</p>
+    <div class="actions end">
+      <button class="btn" id="installCopy" type="button">Copy app link</button>
+      <button class="btn btn-primary" id="installNative" type="button" hidden>Install now</button>
+      <button class="btn btn-primary" id="installClose" type="button">Done</button>
     </div>
   </div>
 </div>

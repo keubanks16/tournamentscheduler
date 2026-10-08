@@ -292,3 +292,15 @@ table.stand{width:100%;border-collapse:collapse;min-width:620px;font-variant-num
   .fld-inline select{max-width:65%}
   .banner .actions{width:100%}
 }
+
+/* home screen app */
+body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area-inset-top,0px);background:var(--navy);z-index:35}
+.install-card{width:min(480px,100%);display:flex;flex-direction:column;gap:12px}
+.install-card .h-sub{margin-top:6px}
+.install-card .note{margin:0}
+.install-head{display:flex;gap:14px;align-items:center}
+.install-head img{border-radius:14px;flex:0 0 auto}
+.install-head .h-card{margin:0 0 2px}
+.install-steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px}
+.ios-share{vertical-align:-3px;color:var(--sky)}
+a.btn{text-decoration:none}

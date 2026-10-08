@@ -9,6 +9,9 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const EMBEDDED = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+const STANDALONE = !!((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone);
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installEvt = null;
 const REDUCED = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const SAMPLE = ['GS Baseball', 'Dirtdogs', 'Bandits', 'Titans', 'Warriors', 'Braves', 'Bulldogs', 'Raptors'];
 const TIE = { pct: ['Win %', 'PCT'], h2h: ['Head-to-head', 'H2H'], rd: ['Run differential', 'RD'], ra: ['Fewest runs allowed', 'RA'], rf: ['Most runs scored', 'RF'] };
@@ -426,6 +429,7 @@ function renderMast() {
     $('#progBar').style.width = (B && B.champion ? 100 : Math.round(done / items.length * 100)) + '%';
   } else $('#prog').hidden = true;
   $$('.needs-top').forEach(b => { b.hidden = EMBEDDED; });
+  $$('.needs-browser').forEach(b => { b.hidden = EMBEDDED || STANDALONE; });
 }
 function renderTabs() {
   const has = state.games.length > 0;
@@ -450,7 +454,18 @@ function renderBanner() {
     el.className = 'banner';
     el.innerHTML = `<p>This is an example tournament with a few scores filled in. Look around, then start your own.</p><div class="actions"><button class="btn btn-sm btn-primary" data-b="fresh">Start my tournament</button><button class="btn btn-sm" data-b="dismiss">Keep the example</button></div>`;
     el.hidden = false;
+  } else if (IS_IOS && !STANDALONE && !EMBEDDED && !store.get('tm-install-hint')) {
+    el.className = 'banner';
+    el.innerHTML = `<p>Put Tournament Manager on your Home Screen. It opens full screen and works with no signal.</p><div class="actions"><button class="btn btn-sm btn-primary" data-b="install">Show me how</button><button class="btn btn-sm" data-b="nohint">Not now</button></div>`;
+    el.hidden = false;
   } else el.hidden = true;
+}
+function openInstall() {
+  $('#installIOS').hidden = !IS_IOS && !!installEvt;
+  $('#installOther').hidden = IS_IOS;
+  $('#installNative').hidden = !installEvt;
+  $('#installSheet').hidden = false;
+  $('#installClose').focus();
 }
 
 /* ---------- Setup ---------- */
@@ -777,6 +792,7 @@ function bind() {
   menu.addEventListener('click', async e => {
     const b = e.target.closest('[data-act]'); if (!b) return; closeMenu();
     const act = b.dataset.act;
+    if (act === 'install') openInstall();
     if (act === 'copy') copyText(scheduleText(), 'Schedule copied. Paste it into your team chat.');
     if (act === 'print') window.print();
     if (act === 'export') download(`${(state.name || 'tournament').replace(/[^\w-]+/g, '-').toLowerCase()}-backup.json`, JSON.stringify(state, null, 2));
@@ -809,6 +825,8 @@ function bind() {
   $('#banner').addEventListener('click', async e => {
     const b = e.target.closest('[data-b]'); if (!b) return;
     const k = b.dataset.b;
+    if (k === 'install') openInstall();
+    if (k === 'nohint') { store.set('tm-install-hint', '1'); render(); }
     if (k === 'dismiss') { state.demo = false; save(); render(); }
     if (k === 'fresh') { const s = defaults(); state = s; save(); render(); $('#tName').focus(); }
     if (k === 'keep') {
@@ -817,6 +835,21 @@ function bind() {
     }
     if (k === 'leave') { viewOnly = false; history.replaceState(null, '', location.pathname); load(); render(); }
   });
+
+  // install sheet
+  const sheet = $('#installSheet');
+  const closeSheet = () => { sheet.hidden = true; };
+  $('#installClose').addEventListener('click', closeSheet);
+  sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
+  $('#installCopy').addEventListener('click', () => copyText(location.origin + location.pathname, 'App link copied. Text it to your families.'));
+  $('#installNative').addEventListener('click', async () => {
+    if (!installEvt) return; installEvt.prompt();
+    try { await installEvt.userChoice; } catch (er) { /* ignore */ }
+    installEvt = null; closeSheet();
+  });
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
+  window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Find Tournament on your home screen.'); });
 
   // setup inputs
   ['#tName', '#tDate', '#gamesPerTeam', '#startTime', '#slotMinutes', '#runCap', '#bracketFormat', '#advance'].forEach(sel => {
@@ -926,6 +959,9 @@ async function boot() {
   }
   bind();
   render();
+  if ('serviceWorker' in navigator && !EMBEDDED && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode unavailable */ });
+  }
 }
 window.__tm = { get state() { return state; }, resolveBracket, rankTeams, allItems }; // handy for debugging in the console
 boot();

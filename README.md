@@ -12,4 +12,9 @@ A one-page baseball tournament manager. No build step and no server: upload `ind
 - **Championship bracket.** Single or double elimination, all teams or the top 2/4/6/8. Seeds come from the standings, top seeds get the byes, and winners move on as soon as a final score goes in. Double elimination includes the "if necessary" championship game.
 - **Sharing.** Copy the schedule as text for a team chat, share a view-only link, print, or download and restore a backup.
 
+## Home Screen app
+The site is an installable web app with its own icon. It opens full screen and works offline.
+- **iPhone:** in Safari, tap Share → Add to Home Screen. Or send people `Tournament.mobileconfig` (also linked inside the app under Menu → Add to Home Screen). They open it, go to Settings → Profile Downloaded → Install, and the app icon appears.
+- **Android / computer:** Menu → Add to Home Screen → Install now.
+
 Data saves automatically in the browser (localStorage). Tournaments from the previous version load automatically.
