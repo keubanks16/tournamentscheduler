@@ -220,6 +220,20 @@
   </div>
 </div>
 
+<!-- Share sheet -->
+<div id="shareSheet" class="overlay" hidden>
+  <div class="modal-card install-card" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <h2 id="shareTitle" class="h-card">Share a view-only link</h2>
+    <p class="note">Anyone with this link sees the schedule, standings and bracket as they are right now. They can't change your tournament. Share a new link after more scores go in.</p>
+    <label class="fld">Link<input id="shareUrl" readonly value="Making link…"></label>
+    <div class="actions end">
+      <button class="btn" id="shareClose" type="button">Close</button>
+      <button class="btn" id="shareCopy" type="button" disabled>Copy link</button>
+      <button class="btn btn-primary" id="shareNative" type="button" disabled hidden>Share…</button>
+    </div>
+  </div>
+</div>
+
 <!-- Install sheet -->
 <div id="installSheet" class="overlay" hidden>
   <div class="modal-card install-card" role="dialog" aria-modal="true" aria-labelledby="installTitle">

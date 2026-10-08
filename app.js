@@ -460,6 +460,18 @@ function renderBanner() {
     el.hidden = false;
   } else el.hidden = true;
 }
+let shareLink = '';
+async function openShare() {
+  const sheet = $('#shareSheet'), inp = $('#shareUrl'), copy = $('#shareCopy'), nat = $('#shareNative');
+  shareLink = ''; inp.value = 'Making link…'; copy.disabled = true; nat.disabled = true;
+  nat.hidden = !navigator.share;
+  sheet.hidden = false; $('#shareClose').focus();
+  try {
+    shareLink = location.origin + location.pathname + '#view=' + await packState();
+    inp.value = shareLink; copy.disabled = false; nat.disabled = false;
+    (navigator.share ? nat : copy).focus();
+  } catch (er) { inp.value = 'Could not make a link in this browser.'; }
+}
 function openInstall() {
   $('#installIOS').hidden = !IS_IOS && !!installEvt;
   $('#installOther').hidden = IS_IOS;
@@ -743,14 +755,23 @@ function scheduleText() {
   if (B && B.champion) lines.push('', `Champion: ${B.champion.team}`);
   return lines.join('\n');
 }
-async function copyText(text, okMsg) {
-  try { await navigator.clipboard.writeText(text); toast(okMsg); }
-  catch (e) {
-    const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    let ok = false; try { ok = document.execCommand('copy'); } catch (er) { /* ignore */ }
-    ta.remove(); toast(ok ? okMsg : 'Copy was blocked by the browser.');
-  }
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', ''); ta.contentEditable = 'true';
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px';
+  document.body.appendChild(ta);
+  const r = document.createRange(); r.selectNodeContents(ta);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  ta.setSelectionRange(0, text.length);
+  let ok = false; try { ok = document.execCommand('copy'); } catch (er) { /* ignore */ }
+  ta.remove(); sel.removeAllRanges();
+  return ok;
+}
+function copyText(text, okMsg) {
+  // Called directly from a tap, so iPhone Safari allows it.
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast(okMsg), () => toast(legacyCopy(text) ? okMsg : 'Press and hold the link to copy it.'));
+  } else toast(legacyCopy(text) ? okMsg : 'Press and hold the link to copy it.');
 }
 function download(name, text) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name;
@@ -797,13 +818,7 @@ function bind() {
     if (act === 'print') window.print();
     if (act === 'export') download(`${(state.name || 'tournament').replace(/[^\w-]+/g, '-').toLowerCase()}-backup.json`, JSON.stringify(state, null, 2));
     if (act === 'import') $('#importFile').click();
-    if (act === 'share') {
-      try {
-        const packed = await packState();
-        const url = location.origin + location.pathname + '#view=' + packed;
-        copyText(url, 'View-only link copied. It shows the tournament as it is right now.');
-      } catch (er) { toast('Could not make a link in this browser.'); }
-    }
+    if (act === 'share') openShare();
     if (act === 'new') {
       if (await ask('Start a new tournament?', 'This clears every team, game and score saved in this browser. Download a backup first if you want to keep it.', 'Clear everything', true)) {
         const keep = state.settings; state = defaults(); state.settings = { ...state.settings, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
@@ -834,6 +849,20 @@ function bind() {
       viewOnly = false; history.replaceState(null, '', location.pathname); save(); render(); toast('Saved to this browser.');
     }
     if (k === 'leave') { viewOnly = false; history.replaceState(null, '', location.pathname); load(); render(); }
+  });
+
+  // share sheet
+  const ss = $('#shareSheet');
+  const closeShare = () => { ss.hidden = true; };
+  $('#shareClose').addEventListener('click', closeShare);
+  ss.addEventListener('click', e => { if (e.target === ss) closeShare(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !ss.hidden) closeShare(); });
+  $('#shareUrl').addEventListener('focus', e => { if (shareLink) e.target.setSelectionRange(0, shareLink.length); });
+  $('#shareCopy').addEventListener('click', () => { if (shareLink) copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
+  $('#shareNative').addEventListener('click', () => {
+    if (!shareLink || !navigator.share) return;
+    navigator.share({ title: state.name || 'Tournament', text: `${state.name || 'Tournament'}: schedule, standings and bracket`, url: shareLink })
+      .then(closeShare, er => { if (er && er.name !== 'AbortError') copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
   });
 
   // install sheet
