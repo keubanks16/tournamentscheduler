@@ -1,0 +1,8 @@
+name = "tournament-live"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tournament-live"
+database_id = "f4b43d7d-b9b7-4f84-92df-47c4ea3295fe"

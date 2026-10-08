@@ -30,6 +30,7 @@
         <div class="prog-label"><span id="progLabel"></span></div>
         <div class="prog-bar"><i id="progBar"></i></div>
       </div>
+      <button id="liveChip" class="live-chip" type="button" hidden><i></i><span>Live</span></button>
       <div class="menu-wrap">
         <button id="menuBtn" class="btn btn-onnavy" aria-haspopup="true" aria-expanded="false" aria-controls="menu">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
@@ -38,7 +39,7 @@
         <div id="menu" class="menu" role="menu" hidden>
           <button role="menuitem" data-act="install" class="needs-browser">Add to Home Screen</button>
           <button role="menuitem" data-act="copy">Copy schedule as text</button>
-          <button role="menuitem" data-act="share" class="needs-top">Share a view-only link</button>
+          <button role="menuitem" data-act="share" class="needs-top">Share with families</button>
           <button role="menuitem" data-act="print" class="needs-top">Print this page</button>
           <button role="menuitem" data-act="export" class="needs-top">Download backup</button>
           <button role="menuitem" data-act="import">Restore from backup…</button>
@@ -223,13 +224,25 @@
 <!-- Share sheet -->
 <div id="shareSheet" class="overlay" hidden>
   <div class="modal-card install-card" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
-    <h2 id="shareTitle" class="h-card">Share a view-only link</h2>
-    <p class="note">Anyone with this link sees the schedule, standings and bracket as they are right now. They can't change your tournament. Share a new link after more scores go in.</p>
-    <label class="fld">Link<input id="shareUrl" readonly value="Making link…"></label>
+    <h2 id="shareTitle" class="h-card">Share with families</h2>
+    <div id="liveOff">
+      <p class="note">Turn on a <b>live link</b> and families see every score the moment you enter it. Their screen refreshes by itself. Only you can make changes.</p>
+      <div class="actions"><button class="btn btn-primary" id="goLive" type="button">Turn on live link</button></div>
+      <p class="note">Or <button class="linkbtn" id="snapBtn" type="button">share a snapshot instead</button>. A snapshot shows the tournament as it is right now and never updates.</p>
+    </div>
+    <div id="liveOn" hidden>
+      <p class="note"><span class="live-dot"></span> <b>Live is on.</b> <span id="liveStatus"></span></p>
+    </div>
+    <div id="linkBox" hidden>
+      <label class="fld"><span id="linkLabel">Live link</span><input id="shareUrl" readonly value=""></label>
+    </div>
+    <p class="note err" id="shareErr"></p>
     <div class="actions end">
+      <button class="linkbtn danger-text" id="stopLive" type="button" hidden>Stop live updates</button>
+      <span class="spacer"></span>
       <button class="btn" id="shareClose" type="button">Close</button>
-      <button class="btn" id="shareCopy" type="button" disabled>Copy link</button>
-      <button class="btn btn-primary" id="shareNative" type="button" disabled hidden>Share…</button>
+      <button class="btn" id="shareCopy" type="button" hidden>Copy link</button>
+      <button class="btn btn-primary" id="shareNative" type="button" hidden>Share…</button>
     </div>
   </div>
 </div>

@@ -12,6 +12,8 @@ const EMBEDDED = (() => { try { return window.self !== window.top; } catch (e) {
 const STANDALONE = !!((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone);
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
+const LIVE_API = location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://tournament-live.kollinmeubanks.workers.dev';
+let liveView = null;   // { id, updated, error } when following someone else's live link
 const REDUCED = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const SAMPLE = ['GS Baseball', 'Dirtdogs', 'Bandits', 'Titans', 'Warriors', 'Braves', 'Bulldogs', 'Raptors'];
 const TIE = { pct: ['Win %', 'PCT'], h2h: ['Head-to-head', 'H2H'], rd: ['Run differential', 'RD'], ra: ['Fewest runs allowed', 'RA'], rf: ['Most runs scored', 'RF'] };
@@ -45,6 +47,7 @@ function normalize(s) {
   o.teams = Array.isArray(o.teams) ? o.teams : [];
   o.order = Array.isArray(o.order) ? o.order : [];
   o.short = Array.isArray(o.short) ? o.short : [];
+  if (o.live && !(o.live.id && o.live.key)) o.live = null;
   if (o.bracket) o.bracket = { results: {}, overrides: {}, delay: 0, ...o.bracket };
   return o;
 }
@@ -70,7 +73,7 @@ function load() {
   if (old) { const m = migrateOld(old); if (m && m.teams.length) { state = normalize(m); save(); return; } }
   state = makeDemo();
 }
-function save() { if (!viewOnly) store.set(KEY, JSON.stringify(state)); }
+function save() { if (viewOnly) return; store.set(KEY, JSON.stringify(state)); queueSync(); }
 
 /* ============================ Time ============================ */
 const toMin = t => { if (typeof t === 'number') return t; const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
@@ -428,6 +431,7 @@ function renderMast() {
     $('#progLabel').textContent = B && B.champion ? `Champion: ${B.champion.team}` : `${done} of ${items.length}${B && B.format === 'double' && !B.champion ? '+' : ''} games final`;
     $('#progBar').style.width = (B && B.champion ? 100 : Math.round(done / items.length * 100)) + '%';
   } else $('#prog').hidden = true;
+  renderLiveChip();
   $$('.needs-top').forEach(b => { b.hidden = EMBEDDED; });
   $$('.needs-browser').forEach(b => { b.hidden = EMBEDDED || STANDALONE; });
 }
@@ -438,6 +442,7 @@ function renderTabs() {
     b.setAttribute('aria-selected', String(state.tab === t));
     b.tabIndex = state.tab === t ? 0 : -1;
     b.disabled = t !== 'setup' && !has;
+    if (t === 'setup') b.hidden = viewOnly;
   });
   const fin = state.games.filter(isFinal).length;
   $('#cnt-schedule').textContent = has ? `${fin}/${state.games.length}` : '';
@@ -446,7 +451,13 @@ function renderTabs() {
 }
 function renderBanner() {
   const el = $('#banner');
-  if (viewOnly) {
+  if (liveView) {
+    el.className = 'banner live';
+    el.innerHTML = liveView.error
+      ? `<p>${esc(liveView.error)}</p>`
+      : `<p><span class="live-dot"></span><b>Live scoreboard.</b> Updates by itself${liveView.updated ? ` · last change ${esc(new Date(liveView.updated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}` : ''}.</p>`;
+    el.hidden = false;
+  } else if (viewOnly) {
     el.className = 'banner';
     el.innerHTML = `<p>You're viewing a shared snapshot. Changes here won't be saved.</p><div class="actions"><button class="btn btn-sm" data-b="keep">Save as my tournament</button><button class="btn btn-sm" data-b="leave">Back to mine</button></div>`;
     el.hidden = false;
@@ -461,16 +472,24 @@ function renderBanner() {
   } else el.hidden = true;
 }
 let shareLink = '';
-async function openShare() {
-  const sheet = $('#shareSheet'), inp = $('#shareUrl'), copy = $('#shareCopy'), nat = $('#shareNative');
-  shareLink = ''; inp.value = 'Making link…'; copy.disabled = true; nat.disabled = true;
-  nat.hidden = !navigator.share;
-  sheet.hidden = false; $('#shareClose').focus();
-  try {
-    shareLink = location.origin + location.pathname + '#view=' + await packState();
-    inp.value = shareLink; copy.disabled = false; nat.disabled = false;
-    (navigator.share ? nat : copy).focus();
-  } catch (er) { inp.value = 'Could not make a link in this browser.'; }
+function liveUrl() { return state.live ? location.origin + location.pathname + '#live=' + state.live.id : ''; }
+function showLink(url, label) {
+  shareLink = url;
+  $('#linkBox').hidden = !url; $('#shareUrl').value = url; $('#linkLabel').textContent = label;
+  $('#shareCopy').hidden = !url; $('#shareNative').hidden = !url || !navigator.share;
+}
+function renderShare() {
+  const on = !!state.live;
+  $('#liveOff').hidden = on; $('#liveOn').hidden = !on; $('#stopLive').hidden = !on;
+  $('#shareErr').textContent = '';
+  if (on) {
+    $('#liveStatus').textContent = sync.status === 'error' ? 'No connection right now. Scores will send when you are back online.' : sync.status === 'pending' ? 'Sending your latest scores…' : 'Families see your scores within a few seconds.';
+    showLink(liveUrl(), 'Live link');
+  } else showLink('', '');
+}
+function openShare() {
+  $('#shareSheet').hidden = false; renderShare();
+  (state.live && navigator.share ? $('#shareNative') : state.live ? $('#shareCopy') : $('#goLive')).focus();
 }
 function openInstall() {
   $('#installIOS').hidden = !IS_IOS && !!installEvt;
@@ -568,7 +587,7 @@ function renderSchedule() {
   if (ui.team && !state.order.includes(ui.team)) ui.team = '';
   sel.value = ui.team;
   $('#editToggle').checked = ui.edit;
-  $('#editToggle').disabled = viewOnly; $('#delaySel').disabled = viewOnly;
+  $('#editToggle').closest('label').hidden = viewOnly; $('#delaySel').closest('label').hidden = viewOnly;
   const { items } = allItems();
   const pending = items.filter(i => !i.final && i.a && i.b);
   const nextT = pending.length ? Math.min(...pending.map(i => i.t)) : null;
@@ -721,11 +740,78 @@ function animateDraw(order) {
   });
 }
 
+/* ============================ Live sync ============================ */
+const sync = { timer: null, inflight: false, status: 'ok', lastBody: '' };
+function livePayload() { const { live, tab, ...pub } = state; return JSON.stringify({ ...pub, tab: 'schedule', demo: false }); }
+function queueSync() {
+  if (!state.live || viewOnly) return;
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(pushLive, 1000);
+}
+async function pushLive() {
+  if (!state.live || viewOnly) return;
+  if (sync.inflight) { clearTimeout(sync.timer); sync.timer = setTimeout(pushLive, 700); return; }
+  const body = livePayload();
+  if (body === sync.lastBody && sync.status === 'ok') return;
+  sync.inflight = true; setSync('pending');
+  try {
+    const r = await fetch(`${LIVE_API}/t/${state.live.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Edit-Key': state.live.key }, body });
+    if (r.status === 403 || r.status === 404) { state.live = null; store.set(KEY, JSON.stringify(state)); toast('The live link was turned off.'); setSync('ok'); return; }
+    if (!r.ok) throw new Error('http ' + r.status);
+    sync.lastBody = body; setSync('ok');
+  } catch (e) {
+    setSync('error');
+    clearTimeout(sync.timer); sync.timer = setTimeout(pushLive, 15000);
+  } finally { sync.inflight = false; }
+}
+function setSync(st) { sync.status = st; renderLiveChip(); if (!$('#shareSheet').hidden) renderShare(); }
+function renderLiveChip() {
+  const c = $('#liveChip'); if (!c) return;
+  c.hidden = !state.live || viewOnly;
+  c.className = 'live-chip ' + (sync.status === 'ok' ? '' : sync.status);
+  c.querySelector('span').textContent = sync.status === 'error' ? 'Offline' : sync.status === 'pending' ? 'Syncing' : 'Live';
+  c.title = sync.status === 'error' ? 'Scores will send when you are back online' : 'Families can follow your live link';
+}
+async function goLive() {
+  const btn = $('#goLive'); btn.disabled = true; btn.textContent = 'Turning on…'; $('#shareErr').textContent = '';
+  try {
+    const body = livePayload();
+    const r = await fetch(`${LIVE_API}/t`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    state.live = { id: j.id, key: j.key }; sync.lastBody = body; sync.status = 'ok';
+    store.set(KEY, JSON.stringify(state)); render(); renderShare();
+    (navigator.share ? $('#shareNative') : $('#shareCopy')).focus();
+  } catch (e) {
+    $('#shareErr').textContent = navigator.onLine === false ? 'You are offline. Connect to the internet to turn on the live link.' : 'The live service did not answer. Try again in a minute.';
+  } finally { btn.disabled = false; btn.textContent = 'Turn on live link'; }
+}
+/* Following someone's live link */
+async function pollLive(first) {
+  if (!liveView) return;
+  try {
+    const r = await fetch(`${LIVE_API}/t/${liveView.id}${liveView.updated ? '?since=' + liveView.updated : ''}`, { cache: 'no-store' });
+    if (r.status === 404) { liveView.error = 'This live link has ended.'; renderBanner(); return; }
+    if (r.status === 200) {
+      const j = await r.json();
+      const tab = first ? 'schedule' : state.tab;
+      state = normalize(j.data); state.tab = tab; state.demo = false;
+      liveView.updated = j.updated;
+      const y = window.scrollY; render(); if (!first) window.scrollTo(0, y);
+    }
+    if (liveView.error) { liveView.error = ''; renderBanner(); }
+    else if (r.status === 204) renderBanner();
+  } catch (e) {
+    liveView.error = 'Trying to reconnect to the live scoreboard…'; renderBanner();
+  }
+}
+
 /* ============================ Share / export ============================ */
 function b64url(bytes) { let s = ''; bytes.forEach(b => { s += String.fromCharCode(b); }); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function fromB64url(str) { const s = atob(str.replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(s, c => c.charCodeAt(0)); }
 async function packState() {
-  const json = new TextEncoder().encode(JSON.stringify({ ...state, tab: 'schedule', demo: false }));
+  const { live, ...pub } = state;
+  const json = new TextEncoder().encode(JSON.stringify({ ...pub, tab: 'schedule', demo: false }));
   if (window.CompressionStream) {
     const cs = new Blob([json]).stream().pipeThrough(new CompressionStream('deflate-raw'));
     return 'z' + b64url(new Uint8Array(await new Response(cs).arrayBuffer()));
@@ -857,13 +943,26 @@ function bind() {
   $('#shareClose').addEventListener('click', closeShare);
   ss.addEventListener('click', e => { if (e.target === ss) closeShare(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !ss.hidden) closeShare(); });
+  $('#liveChip').addEventListener('click', openShare);
+  $('#goLive').addEventListener('click', goLive);
+  $('#snapBtn').addEventListener('click', async () => {
+    showLink('', ''); $('#shareErr').textContent = '';
+    try { showLink(location.origin + location.pathname + '#view=' + await packState(), 'Snapshot link'); $('#shareCopy').focus(); }
+    catch (er) { $('#shareErr').textContent = 'Could not make a link in this browser.'; }
+  });
+  $('#stopLive').addEventListener('click', async () => {
+    if (!(await ask('Stop live updates?', 'Families who have the link will keep seeing the tournament as it is now, but new scores won\'t show up. You can turn on a new live link later.', 'Stop live updates', true))) return;
+    state.live = null; store.set(KEY, JSON.stringify(state)); render(); renderShare();
+  });
   $('#shareUrl').addEventListener('focus', e => { if (shareLink) e.target.setSelectionRange(0, shareLink.length); });
   $('#shareCopy').addEventListener('click', () => { if (shareLink) copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
   $('#shareNative').addEventListener('click', () => {
     if (!shareLink || !navigator.share) return;
-    navigator.share({ title: state.name || 'Tournament', text: `${state.name || 'Tournament'}: schedule, standings and bracket`, url: shareLink })
-      .then(closeShare, er => { if (er && er.name !== 'AbortError') copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
+    const name = state.name || 'Tournament';
+    navigator.share({ title: name, text: state.live && shareLink.includes('#live=') ? `${name}: live scores, standings and bracket` : `${name}: schedule, standings and bracket`, url: shareLink })
+      .catch(er => { if (er && er.name !== 'AbortError') copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
   });
+  window.addEventListener('online', () => { if (state.live) pushLive(); if (liveView) pollLive(); });
 
   // install sheet
   const sheet = $('#installSheet');
@@ -981,6 +1080,17 @@ function deferRender() {
 /* ============================ Boot ============================ */
 async function boot() {
   load();
+  const lv = location.hash.match(/^#live=([a-z0-9]{8})$/);
+  if (lv) {
+    viewOnly = true; liveView = { id: lv[1], updated: 0, error: '' };
+    state = normalize({ ...defaults(), tab: 'schedule' });
+    bind(); render();
+    await pollLive(true);
+    setInterval(() => { if (!document.hidden) pollLive(); }, 15000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLive(); });
+    registerSW();
+    return;
+  }
   const m = location.hash.match(/^#view=(.+)$/);
   if (m) {
     try { state = normalize(await unpackState(m[1])); viewOnly = true; }
@@ -988,6 +1098,10 @@ async function boot() {
   }
   bind();
   render();
+  registerSW();
+  if (state.live) { sync.status = 'pending'; renderLiveChip(); pushLive(); }
+}
+function registerSW() {
   if ('serviceWorker' in navigator && !EMBEDDED && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode unavailable */ });
   }

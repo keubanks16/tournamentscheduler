@@ -304,3 +304,16 @@ body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area
 .install-steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px}
 .ios-share{vertical-align:-3px;color:var(--sky)}
 a.btn{text-decoration:none}
+
+/* live */
+.live-chip{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 12px;border-radius:999px;border:1px solid rgba(255,255,255,.3);background:transparent;color:var(--on-navy);font:700 13px/1 var(--f-label);letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+.live-chip i{width:9px;height:9px;border-radius:50%;background:#45d483;box-shadow:0 0 0 0 rgba(69,212,131,.6);animation:livepulse 2s infinite}
+.live-chip.pending i{background:#f2b453;animation:none}
+.live-chip.error i{background:#ff7a6c;animation:none}
+@keyframes livepulse{0%{box-shadow:0 0 0 0 rgba(69,212,131,.55)}70%{box-shadow:0 0 0 8px rgba(69,212,131,0)}100%{box-shadow:0 0 0 0 rgba(69,212,131,0)}}
+.live-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--win);vertical-align:1px}
+.linkbtn{background:none;border:0;padding:0;font:inherit;font-weight:700;color:var(--sky);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.linkbtn.danger-text{color:var(--loss)}
+.actions .spacer{flex:1}
+.banner.live{background:var(--win-soft);border-color:var(--win)}
+.banner.live .live-dot{margin-right:6px}
