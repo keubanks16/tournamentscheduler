@@ -331,7 +331,7 @@
 			<key>PayloadDisplayName</key>
 			<string>Tournament Manager</string>
 			<key>PayloadIdentifier</key>
-			<string>io.github.keubanks16.tournamentscheduler.webclip</string>
+			<string>com.stingerz-baseball.tournament.webclip</string>
 			<key>PayloadType</key>
 			<string>com.apple.webClip.managed</string>
 			<key>PayloadUUID</key>
@@ -341,7 +341,7 @@
 			<key>Precomposed</key>
 			<true/>
 			<key>URL</key>
-			<string>https://keubanks16.github.io/tournamentscheduler/</string>
+			<string>https://tournament.stingerz-baseball.com/</string>
 		</dict>
 	</array>
 	<key>PayloadDescription</key>
@@ -349,7 +349,7 @@
 	<key>PayloadDisplayName</key>
 	<string>Tournament Manager</string>
 	<key>PayloadIdentifier</key>
-	<string>io.github.keubanks16.tournamentscheduler</string>
+	<string>com.stingerz-baseball.tournament</string>
 	<key>PayloadOrganization</key>
 	<string>Tournament Manager</string>
 	<key>PayloadRemovalDisallowed</key>
