@@ -483,7 +483,7 @@ function renderShare() {
   $('#liveOff').hidden = on; $('#liveOn').hidden = !on; $('#stopLive').hidden = !on;
   $('#shareErr').textContent = '';
   if (on) {
-    $('#liveStatus').textContent = sync.status === 'error' ? 'No connection right now. Scores will send when you are back online.' : sync.status === 'pending' ? 'Sending your latest scores…' : 'Families see your scores within a few seconds.';
+    $('#liveStatus').textContent = sync.status === 'error' ? 'No connection right now. Scores will send when you are back online.' : sync.status === 'pending' ? 'Sending your latest scores…' : 'Anyone with the link sees your scores within a few seconds.';
     showLink(liveUrl(), 'Live link');
   } else showLink('', '');
 }
@@ -770,7 +770,7 @@ function renderLiveChip() {
   c.hidden = !state.live || viewOnly;
   c.className = 'live-chip ' + (sync.status === 'ok' ? '' : sync.status);
   c.querySelector('span').textContent = sync.status === 'error' ? 'Offline' : sync.status === 'pending' ? 'Syncing' : 'Live';
-  c.title = sync.status === 'error' ? 'Scores will send when you are back online' : 'Families can follow your live link';
+  c.title = sync.status === 'error' ? 'Scores will send when you are back online' : 'Anyone with your live link can follow along';
 }
 async function goLive() {
   const btn = $('#goLive'); btn.disabled = true; btn.textContent = 'Turning on…'; $('#shareErr').textContent = '';
@@ -951,7 +951,7 @@ function bind() {
     catch (er) { $('#shareErr').textContent = 'Could not make a link in this browser.'; }
   });
   $('#stopLive').addEventListener('click', async () => {
-    if (!(await ask('Stop live updates?', 'Families who have the link will keep seeing the tournament as it is now, but new scores won\'t show up. You can turn on a new live link later.', 'Stop live updates', true))) return;
+    if (!(await ask('Stop live updates?', 'Anyone who has the link will keep seeing the tournament as it is now, but new scores won\'t show up. You can turn on a new live link later.', 'Stop live updates', true))) return;
     state.live = null; store.set(KEY, JSON.stringify(state)); render(); renderShare();
   });
   $('#shareUrl').addEventListener('focus', e => { if (shareLink) e.target.setSelectionRange(0, shareLink.length); });
@@ -970,7 +970,7 @@ function bind() {
   $('#installClose').addEventListener('click', closeSheet);
   sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
-  $('#installCopy').addEventListener('click', () => copyText(location.origin + location.pathname, 'App link copied. Text it to your families.'));
+  $('#installCopy').addEventListener('click', () => copyText(location.origin + location.pathname, 'App link copied.'));
   $('#installNative').addEventListener('click', async () => {
     if (!installEvt) return; installEvt.prompt();
     try { await installEvt.userChoice; } catch (er) { /* ignore */ }
