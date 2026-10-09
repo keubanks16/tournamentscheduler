@@ -211,10 +211,12 @@ function buildSchedule() {
   state.bracket = null;
 }
 function retime() {
-  const ordered = [...state.games].sort((x, y) => toMin(x.time) - toMin(y.time) || x.field - y.field);
+  const ordered = [...state.games].sort((x, y) => gMin(x) - gMin(y) || x.field - y.field);
   assignSlots(ordered, toMin(state.settings.startTime));
 }
-const poolSorted = () => [...state.games].sort((x, y) => toMin(x.time) - toMin(y.time) || x.field - y.field);
+/* Pool game time in minutes, counting games after midnight as the next day */
+function gMin(g) { const m = toMin(g.time), st = toMin(state.settings.startTime); return m < st - 180 ? m + 1440 : m; }
+const poolSorted = () => [...state.games].sort((x, y) => gMin(x) - gMin(y) || x.field - y.field);
 
 /* ============================ Standings ============================ */
 function poolStats() {
@@ -269,7 +271,7 @@ function advancingCount() { const n = state.order.length, a = +state.settings.ad
 function projectedSeeds() { return rankTeams().slice(0, advancingCount()).map(r => r.team); }
 
 /* ============================ Bracket ============================ */
-function poolEnd() { return state.games.length ? Math.max(...state.games.map(g => toMin(g.time))) : toMin(state.settings.startTime) - state.settings.slotMinutes; }
+function poolEnd() { return state.games.length ? Math.max(...state.games.map(gMin)) : toMin(state.settings.startTime) - state.settings.slotMinutes; }
 function bracketStart() { return poolEnd() + state.settings.slotMinutes; }
 function roundName(r, total) { const left = total - r; return left === 1 ? 'Championship' : left === 2 ? 'Semifinals' : left === 3 ? 'Quarterfinals' : `Round ${r + 1}`; }
 function resultFor(br, key, a, b) { const r = br.results[key]; return r && a && b && r.a === a.team && r.b === b.team ? r : null; }
@@ -421,7 +423,7 @@ function rainDelay(mins) {
 
 /* ============================ All games ============================ */
 function allItems() {
-  const items = poolSorted().map((g, i) => ({ kind: 'pool', id: g.id, num: i + 1, label: 'Pool A', t: toMin(g.time), field: g.field, a: { team: g.a }, b: { team: g.b }, sa: g.sa, sb: g.sb, final: isFinal(g) }));
+  const items = poolSorted().map((g, i) => ({ kind: 'pool', id: g.id, num: i + 1, label: 'Pool A', t: gMin(g), field: g.field, a: { team: g.a }, b: { team: g.b }, sa: g.sa, sb: g.sb, final: isFinal(g) }));
   const B = resolveBracket();
   if (B) B.games.forEach(m => items.push({ kind: 'bracket', id: m.key, num: m.num, label: m.label, group: m.group, t: m.time, field: m.field, a: m.a, b: m.b, aLabel: m.aLabel, bLabel: m.bLabel, sa: m.sa, sb: m.sb, final: m.final, tied: m.tied, winner: m.winner }));
   items.sort((x, y) => x.t - y.t || x.field - y.field || x.num - y.num);
@@ -807,9 +809,9 @@ function renderPrint(sel = ui.printSel || 'both') {
     h += `<section class="pv-section pv-keep"><h2 class="pv-h">${B.format === 'double' ? 'Double' : 'Single'} elimination bracket</h2><div class="pv-bracket">` +
       rounds.map(r => `<div class="pv-round"><h4>${esc(r.title)}</h4>${r.games.map(match).join('')}${r.byes.length ? `<p class="pv-small">Bye: ${r.byes.map(esc).join(', ')}</p>` : ''}</div>`).join('') + `</div></section>`;
   }
-  const liveLink = state.live && !viewOnly ? `${location.host}${location.pathname}#live=${state.live.id}` : '';
-  h += `<footer class="pv-foot"><span class="pv-thanks">${esc(P.thanks || '')}</span><span>${liveLink ? 'Live scores: ' + esc(liveLink) : esc(location.host)}</span></footer>`;
-  pv.innerHTML = h;
+  h += `<footer class="pv-foot"><span class="pv-thanks">${esc(P.thanks || '')}</span><span></span></footer>`;
+  // Spacer rows repeat on every printed page, giving top and bottom margins while the page itself has none
+  pv.innerHTML = `<table class="pv-frame"><thead><tr><td class="pv-gap"></td></tr></thead><tfoot><tr><td class="pv-gap"></td></tr></tfoot><tbody><tr><td>${h}</td></tr></tbody></table>`;
 }
 
 /* ============================ PDF & image export ============================ */
@@ -948,7 +950,7 @@ async function buildExport(sel, mode) {
   const footer = (c, y, page, pages) => {
     c.fillStyle = '#bbb'; c.fillRect(M, y, CW, 1);
     setF(c, `600 9.5px ${FL}`, 1); c.fillStyle = accent; if (P.thanks) c.fillText(fit(c, P.thanks.toUpperCase(), CW - 120), M, y + 16);
-    c.fillStyle = '#555'; c.textAlign = 'right'; c.fillText(pages > 1 ? `PAGE ${page} OF ${pages}` : location.host.toUpperCase(), M + CW, y + 16); c.textAlign = 'left';
+    c.fillStyle = '#555'; c.textAlign = 'right'; if (pages > 1) c.fillText(`PAGE ${page} OF ${pages}`, M + CW, y + 16); c.textAlign = 'left';
   };
   const paint = (w, h, scale, list, footY, page, pages) => {
     const cv = document.createElement('canvas'); cv.width = Math.round(w * scale); cv.height = Math.round(h * scale);

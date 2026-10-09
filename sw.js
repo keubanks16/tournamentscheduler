@@ -1,6 +1,6 @@
 /* Offline support: the app works at the field even with no signal.
    App files are fetched fresh when online and served from the cache when offline. */
-const CACHE = 'tm-v14';
+const CACHE = 'tm-v16';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/favicon.png', 'icons/butler-fd.png'];
 

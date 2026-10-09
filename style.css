@@ -363,7 +363,11 @@ a.btn{text-decoration:none}
 /* ---------- Printout (a separate sheet built for paper) ---------- */
 #printView{display:none}
 @media print{
-  @page{size:letter;margin:.45in .5in}
+  @page{size:letter;margin:0}
+  #printView{padding:0 .5in}
+  .pv-frame{width:100%;border-collapse:collapse}
+  .pv-frame>thead>tr>td,.pv-frame>tfoot>tr>td,.pv-frame>tbody>tr>td{padding:0;border:0}
+  .pv-gap{height:.45in}
   html,body{background:#fff!important;color:#111!important;color-scheme:light}
   body>*:not(#printView){display:none!important}
   body::before{display:none!important}
