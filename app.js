@@ -436,6 +436,7 @@ function render() {
   if (t === 'schedule') renderSchedule();
   if (t === 'standings') renderStandings();
   if (t === 'bracket') renderBracket();
+  renderPrint();
 }
 function applyProfile() {
   const P = profileOf(), root = document.documentElement;
@@ -737,6 +738,52 @@ function renderBracket() {
   area.innerHTML = html;
 }
 
+/* ============================ Printout ============================ */
+function renderPrint() {
+  const pv = $('#printView'); if (!pv) return;
+  const P = profileOf(), { items, B } = allItems();
+  const meta = [state.date ? fmtDate(state.date) : '', state.location || '', `${state.order.length} teams · ${state.settings.fields.length} field${state.settings.fields.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+  let h = `<header class="pv-head">${P.logo ? `<img src="${esc(P.logo)}" alt="">` : ''}<div>
+    ${P.presenter ? `<p class="pv-eyebrow">${esc(P.presenter)}</p>` : ''}
+    <h1 class="pv-name">${esc(state.name || 'Tournament')}</h1>
+    <p class="pv-meta">${esc(meta)}</p>
+    ${P.cause ? `<p class="pv-cause">${RIBBON}${esc(P.cause)}</p>` : ''}</div></header>`;
+  if (B && B.champion) h += `<div class="pv-champ">Champion: ${esc(B.champion.team)}</div>`;
+
+  // Schedule: one row per game, blank boxes to write scores in
+  const name = (side, label) => side ? `<span class="pv-team">${side.seed ? `<span class="pv-small">#${side.seed}</span> ` : ''}${esc(side.team)}</span>` : `<span class="pv-team tbd">${esc(label || 'TBD')}</span>`;
+  const box = v => `<span class="pv-box">${v !== '' && v != null ? esc(v) : ''}</span>`;
+  let lastT = null;
+  h += `<section class="pv-section"><h2 class="pv-h">Schedule</h2><table class="pv-table"><thead><tr><th>Time</th><th>Field</th><th>Game</th><th>Team</th><th>R</th><th></th><th>Team</th><th>R</th></tr></thead><tbody>` +
+    items.map(i => {
+      const first = i.t !== lastT; lastT = i.t;
+      return `<tr class="${first ? 'pv-slot' : ''}"><td class="pv-time">${first ? fmt(i.t) : ''}</td><td class="pv-small">${esc(fieldName(i.field))}</td>
+        <td class="pv-small">G${i.num}${i.kind === 'bracket' ? `<br>${esc(i.label)}` : ''}</td>
+        <td>${name(i.a, i.aLabel)}</td><td>${box(i.sa)}</td><td class="pv-vs">vs</td><td>${name(i.b, i.bLabel)}</td><td>${box(i.sb)}</td></tr>`;
+    }).join('') + `</tbody></table></section>`;
+
+  // Standings
+  const rows = rankTeams();
+  if (state.games.some(isFinal)) {
+    h += `<section class="pv-section pv-keep"><h2 class="pv-h">Pool standings</h2><table class="pv-table pv-num"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PCT</th><th>RF</th><th>RA</th><th>RD</th></tr></thead><tbody>` +
+      rows.map((r, i) => `<tr><td>${i + 1}</td><td class="pv-team">${esc(r.team)}</td><td>${r.w}</td><td>${r.l}</td><td>${r.t}</td><td>${pctStr(r.pct)}</td><td>${r.rf}</td><td>${r.ra}</td><td>${r.rd > 0 ? '+' : ''}${r.rd}</td></tr>`).join('') + `</tbody></table></section>`;
+  }
+
+  // Bracket
+  if (B) {
+    const match = m => `<div class="pv-match"><div class="pv-mmeta">G${m.num} · ${fmt(m.time)} · ${esc(fieldName(m.field))}</div>
+      <div class="pv-mrow">${name(m.a, m.aLabel)}${box(m.sa)}</div><div class="pv-mrow">${name(m.b, m.bLabel)}${box(m.sb)}</div></div>`;
+    const rounds = B.format === 'single'
+      ? B.rounds.map(r => ({ title: r[0].label, games: r.filter(m => !m.bye), byes: r.filter(m => m.bye).map(m => m.winner.team) }))
+      : B.rounds.map((r, i) => ({ title: `Round ${i + 1}`, games: r.games, byes: r.byes.map(b => b.team) }));
+    h += `<section class="pv-section pv-keep"><h2 class="pv-h">${B.format === 'double' ? 'Double' : 'Single'} elimination bracket</h2><div class="pv-bracket">` +
+      rounds.map(r => `<div class="pv-round"><h4>${esc(r.title)}</h4>${r.games.map(match).join('')}${r.byes.length ? `<p class="pv-small">Bye: ${r.byes.map(esc).join(', ')}</p>` : ''}</div>`).join('') + `</div></section>`;
+  }
+  const liveLink = state.live && !viewOnly ? `${location.host}${location.pathname}#live=${state.live.id}` : '';
+  h += `<footer class="pv-foot"><span class="pv-thanks">${esc(P.thanks || '')}</span><span>${liveLink ? 'Live scores: ' + esc(liveLink) : esc(location.host)}</span></footer>`;
+  pv.innerHTML = h;
+}
+
 /* ============================ Overlays ============================ */
 function ask(title, body, ok = 'Continue', danger = false) {
   return new Promise(res => {
@@ -951,7 +998,7 @@ function bind() {
     const act = b.dataset.act;
     if (act === 'install') openInstall();
     if (act === 'copy') copyText(scheduleText(), 'Schedule copied. Paste it into your team chat.');
-    if (act === 'print') window.print();
+    if (act === 'print') { renderPrint(); window.print(); }
     if (act === 'export') download(`${(state.name || 'tournament').replace(/[^\w-]+/g, '-').toLowerCase()}-backup.json`, JSON.stringify(state, null, 2));
     if (act === 'import') $('#importFile').click();
     if (act === 'share') openShare();
@@ -1012,6 +1059,7 @@ function bind() {
     navigator.share({ title: name, text: state.live && shareLink.includes('#live=') ? `${name}: live scores, standings and bracket` : `${name}: schedule, standings and bracket`, url: shareLink })
       .catch(er => { if (er && er.name !== 'AbortError') copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
   });
+  window.addEventListener('beforeprint', renderPrint);
   window.addEventListener('online', () => { if (state.live) pushLive(); if (liveView) pollLive(); });
 
   // install sheet
