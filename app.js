@@ -80,7 +80,7 @@ function normalize(s) {
   o.order = Array.isArray(o.order) ? o.order : [];
   o.short = Array.isArray(o.short) ? o.short : [];
   if (o.live && !(o.live.id && o.live.key)) o.live = null;
-  if (o.bracket) o.bracket = { results: {}, overrides: {}, delay: 0, ...o.bracket };
+  if (o.bracket) { o.bracket = { results: {}, overrides: {}, delay: 0, ...o.bracket }; if (!o.bracket.count) o.bracket.count = (o.bracket.seeds || []).length; }
   return o;
 }
 function migrateOld(raw) {
@@ -287,10 +287,20 @@ function finishMatch(m, res) {
   m.winner = m.final && !m.tied ? (+res.sa > +res.sb ? m.a : m.b) : null;
   m.loser = m.winner ? (m.winner === m.a ? m.b : m.a) : null;
 }
+const known = sd => !!(sd && sd.team);
+const sideName = sd => sd ? (sd.team || `#${sd.seed} TBD`) : '';
+function poolDone() { return state.games.length > 0 && state.games.every(isFinal); }
+/* Seeds stay "#1 TBD" until every pool game is final, then fill from the standings.
+   They lock once the first bracket score goes in. */
+function bracketSeeds(br) {
+  if (br.seeds) return br.seeds;
+  if (poolDone()) return projectedSeeds().slice(0, br.count);
+  return Array(br.count).fill(null);
+}
 function resolveSingle(br) {
   const F = state.settings.fields.length, len = state.settings.slotMinutes;
-  const seeds = br.seeds, size = nextPow2(seeds.length), pos = seedPositions(size);
-  const ent = s => seeds[s - 1] ? { team: seeds[s - 1], seed: s } : null;
+  const seeds = bracketSeeds(br), size = nextPow2(seeds.length), pos = seedPositions(size);
+  const ent = s => s <= seeds.length ? { team: seeds[s - 1] || null, seed: s } : null;
   const rounds = [];
   const total = Math.log2(size);
   let num = state.games.length + 1;
@@ -327,23 +337,25 @@ function resolveSingle(br) {
 }
 function resolveDouble(br) {
   const F = state.settings.fields.length, len = state.settings.slotMinutes;
-  const seeds = br.seeds, seedOf = t => seeds.indexOf(t) + 1;
+  const PH = '\u0001seed';
+  const seeds = bracketSeeds(br).map((t, i) => t || PH + (i + 1)), seedOf = t => seeds.indexOf(t) + 1;
+  const ent = t => ({ team: t.startsWith(PH) ? null : t, seed: seedOf(t) });
   const losses = Object.fromEntries(seeds.map(t => [t, 0])), byeCount = {}, played = new Set();
   const rounds = []; let cursor = bracketStart(), num = state.games.length + 1, champion = null, finalStarted = false;
   for (let r = 0; r < 80; r++) {
     const alive = seeds.filter(t => losses[t] < 2);
-    if (alive.length <= 1) { champion = alive[0] ? { team: alive[0], seed: seedOf(alive[0]) } : null; break; }
+    if (alive.length <= 1) { champion = alive[0] && !alive[0].startsWith(PH) ? ent(alive[0]) : null; break; }
     const zero = alive.filter(t => losses[t] === 0), one = alive.filter(t => losses[t] === 1);
     const games = [], byes = [];
     const mk = (a, b, label, group) => {
       const key = `D${r}:${a}|${b}`;
-      games.push({ key, r, a: { team: a, seed: seedOf(a) }, b: { team: b, seed: seedOf(b) }, label, group, num: num++ });
+      games.push({ key, r, a: ent(a), b: ent(b), label, group, num: num++ });
     };
     const pairUp = (arr, label, group) => {
       const list = [...arr];
       if (list.length % 2) {
         let bi = 0; list.forEach((t, i) => { if ((byeCount[t] || 0) < (byeCount[list[bi]] || 0)) bi = i; });
-        const t = list.splice(bi, 1)[0]; byeCount[t] = (byeCount[t] || 0) + 1; byes.push({ team: t, group });
+        const t = list.splice(bi, 1)[0]; byeCount[t] = (byeCount[t] || 0) + 1; byes.push({ ...ent(t), group });
       }
       const pairs = [];
       while (list.length) pairs.push([list.shift(), list.pop()]);
@@ -370,14 +382,14 @@ function resolveDouble(br) {
     rounds.push({ games, byes, nextTime: cursor + (br.delay || 0) });
     if (games.some(g => !g.winner)) break;
   }
-  return { format: 'double', rounds, games: rounds.flatMap(x => x.games), champion, losses };
+  return { format: 'double', rounds, games: rounds.flatMap(x => x.games), champion, losses, seeds: seeds.map(ent) };
 }
 function resolveBracket() { const br = state.bracket; if (!br) return null; return br.format === 'double' ? resolveDouble(br) : resolveSingle(br); }
 function buildBracket() {
-  state.bracket = { format: state.settings.bracketFormat, seeds: projectedSeeds(), results: {}, overrides: {}, delay: 0 };
+  state.bracket = { format: state.settings.bracketFormat, seeds: null, count: advancingCount(), results: {}, overrides: {}, delay: 0 };
 }
 function bracketHasScores() { const br = state.bracket; return !!br && Object.values(br.results).some(r => r.sa !== '' || r.sb !== ''); }
-function seedsChanged() { const br = state.bracket; if (!br) return false; const p = projectedSeeds(); return p.length !== br.seeds.length || p.some((t, i) => t !== br.seeds[i]); }
+function seedsChanged() { const br = state.bracket; if (!br || !br.seeds) return false; const p = projectedSeeds().slice(0, br.count); return p.length !== br.seeds.length || p.some((t, i) => t !== br.seeds[i]); }
 
 /* ============================ Scores ============================ */
 function cleanScore(v) { v = String(v).replace(/\D/g, '').slice(0, 3); return v; }
@@ -387,8 +399,9 @@ function setScore(kind, id, side, v) {
     g['s' + side] = v;
   } else {
     const B = resolveBracket(); const m = B && B.games.find(x => x.key === id);
-    if (!m || !m.a || !m.b) return;
+    if (!m || !known(m.a) || !known(m.b)) return;
     const br = state.bracket;
+    if (!br.seeds && poolDone()) br.seeds = projectedSeeds().slice(0, br.count);
     let r = br.results[id];
     if (!r || r.a !== m.a.team || r.b !== m.b.team) r = br.results[id] = { a: m.a.team, b: m.b.team, sa: '', sb: '' };
     r['s' + side] = v;
@@ -626,13 +639,14 @@ function renderSetupDerived() {
 /* ---------- Schedule ---------- */
 function teamCell(side, label, it, hl) {
   if (!side) return `<span class="tm tbd">${esc(label || 'TBD')}</span>`;
+  if (!side.team) return `<span class="tm tbd"><span class="seed">#${side.seed}</span><span>TBD</span></span>`;
   const won = winnerOf(it) === side.team;
   return `<span class="tm${won ? ' won' : ''}${hl === side.team ? ' mine' : ''}">${side.seed ? `<span class="seed">#${side.seed}</span>` : ''}<span>${esc(side.team)}</span></span>`;
 }
 function scoreInput(it, side) {
-  const can = it.a && it.b && !viewOnly;
+  const can = known(it.a) && known(it.b) && !viewOnly;
   const v = side === 'a' ? it.sa : it.sb;
-  const name = side === 'a' ? (it.a && it.a.team) : (it.b && it.b.team);
+  const name = side === 'a' ? sideName(it.a) : sideName(it.b);
   return `<input class="score" id="sc-${domId(it.id)}-${side}" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" aria-label="${esc(name || 'TBD')} runs" data-kind="${it.kind}" data-id="${esc(it.id)}" data-side="${side}" value="${esc(v)}" ${can ? '' : 'disabled'}>`;
 }
 function editRow(it) {
@@ -643,7 +657,7 @@ function statusTag(it, nextT) {
   if (it.final && it.tied && it.kind === 'bracket') return '<span class="tag bad">Tie: needs a winner</span>';
   if (it.final) return '<span class="tag final">Final</span>';
   if ((it.sa !== '' && it.sa != null) || (it.sb !== '' && it.sb != null)) return '<span class="tag live">In progress</span>';
-  if (it.t === nextT && it.a && it.b) return '<span class="tag next">Up next</span>';
+  if (it.t === nextT && known(it.a) && known(it.b)) return '<span class="tag next">Up next</span>';
   return '';
 }
 function gameCard(it, nextT, hl) {
@@ -663,7 +677,7 @@ function renderSchedule() {
   $('#editToggle').checked = ui.edit;
   $('#editToggle').closest('label').hidden = viewOnly; $('#delaySel').closest('label').hidden = viewOnly;
   const { items } = allItems();
-  const pending = items.filter(i => !i.final && i.a && i.b);
+  const pending = items.filter(i => !i.final && known(i.a) && known(i.b));
   const nextT = pending.length ? Math.min(...pending.map(i => i.t)) : null;
   const shown = ui.team ? items.filter(i => (i.a && i.a.team === ui.team) || (i.b && i.b.team === ui.team)) : items;
 
@@ -723,7 +737,7 @@ function renderStandings() {
 function bracketMatch(m, extraCls = '') {
   const it = { kind: 'bracket', id: m.key, a: m.a, b: m.b, sa: m.sa, sb: m.sb, final: m.final, tied: m.tied, t: m.time, field: m.field };
   const w = m.winner && m.winner.team;
-  const row = (s, label, side) => `<div class="m-row">${s ? `<span class="tm${w === s.team ? ' won' : ''}"><span class="seed">#${s.seed}</span><span>${esc(s.team)}</span></span>` : `<span class="tm tbd">${esc(label || 'TBD')}</span>`}${scoreInput(it, side)}</div>`;
+  const row = (s, label, side) => `<div class="m-row">${s && !s.team ? `<span class="tm tbd"><span class="seed">#${s.seed}</span><span>TBD</span></span>` : s ? `<span class="tm${w === s.team ? ' won' : ''}"><span class="seed">#${s.seed}</span><span>${esc(s.team)}</span></span>` : `<span class="tm tbd">${esc(label || 'TBD')}</span>`}${scoreInput(it, side)}</div>`;
   const tag = m.final && m.tied ? '<span class="tag bad">Tie</span>' : m.final ? '<span class="tag final">Final</span>' : '';
   return `<div class="match ${m.final ? 'is-final' : ''} ${extraCls}">
     <div class="m-meta"><span>G${m.num} · ${fmt(m.time)} · ${esc(fieldName(m.field))}</span>${tag}</div>
@@ -737,7 +751,7 @@ function renderBracket() {
     const seeds = projectedSeeds(), r = Object.fromEntries(rankTeams().map(x => [x.team, x]));
     area.innerHTML = `<div class="card">
       <div class="card-head"><h2 class="h-card">${fin < total ? 'Projected seeds' : 'Seeds are set'}</h2><span class="pill">${S.bracketFormat === 'double' ? 'Double' : 'Single'} elimination</span></div>
-      <p class="note" style="margin:0 0 14px">${fin < total ? `${total - fin} pool game${total - fin > 1 ? 's' : ''} still need a score. Seeds come straight from the standings.` : `Pool play is done. ${seeds.length} teams advance, seeded by the standings.`}${nextPow2(seeds.length) !== seeds.length && S.bracketFormat === 'single' ? ` Top seeds get ${nextPow2(seeds.length) - seeds.length} first-round bye${nextPow2(seeds.length) - seeds.length > 1 ? 's' : ''}.` : ''}</p>
+      <p class="note" style="margin:0 0 14px">${fin < total ? `${total - fin} pool game${total - fin > 1 ? 's' : ''} still need a score. You can build the bracket now: it shows #1 TBD, #2 TBD and so on, and fills in the teams when pool play is final.` : `Pool play is done. ${seeds.length} teams advance, seeded by the standings.`}${nextPow2(seeds.length) !== seeds.length && S.bracketFormat === 'single' ? ` Top seeds get ${nextPow2(seeds.length) - seeds.length} first-round bye${nextPow2(seeds.length) - seeds.length > 1 ? 's' : ''}.` : ''}</p>
       <ol class="seed-list">${seeds.map((t, i) => `<li><b>${i + 1}</b><span>${esc(t)}</span><span class="rec">${r[t].w}-${r[t].l}${r[t].t ? '-' + r[t].t : ''}</span></li>`).join('')}</ol>
       <div class="actions" style="margin-top:16px"><button class="btn btn-primary" id="buildBracketBtn" ${viewOnly || seeds.length < 2 ? 'disabled' : ''}>Build the bracket</button>
       <span class="note" style="margin:0;align-self:center">Bracket games start at ${fmt(bracketStart())} and keep rotating through your fields.</span></div></div>`;
@@ -746,20 +760,20 @@ function renderBracket() {
   const B = resolveBracket();
   let html = '';
   if (seedsChanged() && !viewOnly) html += `<div class="banner warn"><p>Pool results changed after the bracket was built, so the seeds no longer match the standings.</p><div class="actions"><button class="btn btn-sm" id="reseedBtn">Rebuild with new seeds</button></div></div>`;
-  html += `<div class="card"><div class="card-head"><h2 class="h-card">Championship bracket</h2><div class="actions"><span class="pill">${B.format === 'double' ? 'Double' : 'Single'} elimination · ${br.seeds.length} teams</span>${viewOnly ? '' : `<label class="switch"><input type="checkbox" id="editToggle2" ${ui.edit ? 'checked' : ''}><span>Edit times</span></label><button class="btn btn-sm" id="rebuildBtn">Rebuild</button>`}</div></div>
-    <p class="note" style="margin:0 0 6px">Enter the final score in each game. The winner moves on automatically.${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
+  html += `<div class="card"><div class="card-head"><h2 class="h-card">Championship bracket</h2><div class="actions"><span class="pill">${B.format === 'double' ? 'Double' : 'Single'} elimination · ${br.count} teams</span>${viewOnly ? '' : `<label class="switch"><input type="checkbox" id="editToggle2" ${ui.edit ? 'checked' : ''}><span>Edit times</span></label><button class="btn btn-sm" id="rebuildBtn">Rebuild</button>`}</div></div>
+    <p class="note" style="margin:0 0 6px">${poolDone() || br.seeds ? 'Enter the final score in each game. The winner moves on automatically.' : `Seeds show as TBD until pool play is final (${state.games.filter(g => !isFinal(g)).length} pool game${state.games.filter(g => !isFinal(g)).length === 1 ? '' : 's'} left). Teams fill in by themselves.`}${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
   if (B.champion) html += `<div class="champ" style="margin:12px 0">${profileOf().cause ? RIBBON : trophy()}<p class="eyebrow">${esc(state.name || 'Tournament')} champion</p><strong>${esc(B.champion.team)}</strong><span class="note" style="margin:0">#${B.champion.seed} seed</span></div>`;
 
   if (B.format === 'single') {
-    html += `<div class="bracket-scroll"><div class="bk">` + B.rounds.map((round) => `<div class="bk-col"><h3>${esc(round[0].label)}</h3><div class="bk-slots">${round.map(m => `<div class="bk-slot">${m.bye ? `<div class="match is-bye"><div class="m-meta"><span>Bye</span></div><div class="m-row"><span class="tm"><span class="seed">#${m.winner.seed}</span><span>${esc(m.winner.team)}</span></span></div></div>` : bracketMatch(m)}</div>`).join('')}</div></div>`).join('') + `</div></div>`;
+    html += `<div class="bracket-scroll"><div class="bk">` + B.rounds.map((round) => `<div class="bk-col"><h3>${esc(round[0].label)}</h3><div class="bk-slots">${round.map(m => `<div class="bk-slot">${m.bye ? `<div class="match is-bye"><div class="m-meta"><span>Bye</span></div><div class="m-row"><span class="tm"><span class="seed">#${m.winner.seed}</span><span>${esc(m.winner.team || 'TBD')}</span></span></div></div>` : bracketMatch(m)}</div>`).join('')}</div></div>`).join('') + `</div></div>`;
   } else {
     const L = B.losses;
-    html += `<div class="status-strip" style="margin:12px 0">${br.seeds.map((t, i) => { const l = L[t] || 0; return `<span class="st ${l >= 2 ? 'out' : 'l' + l}"><span>#${i + 1} ${esc(t)}</span><i>${l >= 2 ? 'Out' : l === 1 ? '1 loss' : 'Unbeaten'}</i></span>`; }).join('')}</div>`;
+    if (B.seeds.every(known)) html += `<div class="status-strip" style="margin:12px 0">${B.seeds.map(sd => sd.team).map((t, i) => { const l = L[t] || 0; return `<span class="st ${l >= 2 ? 'out' : 'l' + l}"><span>#${i + 1} ${esc(t)}</span><i>${l >= 2 ? 'Out' : l === 1 ? '1 loss' : 'Unbeaten'}</i></span>`; }).join('')}</div>`;
     html += `<div class="bracket-scroll"><div class="de-cols">` + B.rounds.map((rd, ri) => {
       const groups = { w: [], e: [], c: [] }; rd.games.forEach(g => groups[g.group].push(g));
       const name = { w: 'Winners side', e: 'Elimination side', c: 'Championship' };
       const body = ['c', 'w', 'e'].filter(k => groups[k].length).map(k => `<p class="de-group ${k}">${name[k]}</p>${groups[k].map(g => bracketMatch(g)).join('')}`).join('');
-      const byes = rd.byes.length ? `<div class="byes">Bye this round: ${rd.byes.map(b => esc(b.team)).join(', ')}</div>` : '';
+      const byes = rd.byes.length ? `<div class="byes">Bye this round: ${rd.byes.map(b => esc(sideName(b))).join(', ')}</div>` : '';
       return `<div class="de-col"><h3>Round ${ri + 1}</h3>${body}${byes}</div>`;
     }).join('') + (!B.champion ? `<div class="de-col"><h3>Round ${B.rounds.length + 1}</h3><div class="waiting">Pairings appear when every game in round ${B.rounds.length} is final. Next start: about ${fmt(B.rounds[B.rounds.length - 1].nextTime)}.</div></div>` : '') + `</div></div>`;
   }
@@ -781,7 +795,7 @@ function renderPrint(sel = ui.printSel || 'both') {
   if (B && B.champion && sel !== 'pool') h += `<div class="pv-champ">Champion: ${esc(B.champion.team)}</div>`;
 
   // Schedule: one row per game, blank boxes to write scores in
-  const name = (side, label) => side ? `<span class="pv-team">${side.seed ? `<span class="pv-small">#${side.seed}</span> ` : ''}${esc(side.team)}</span>` : `<span class="pv-team tbd">${esc(label || 'TBD')}</span>`;
+  const name = (side, label) => side && !side.team ? `<span class="pv-team tbd">#${side.seed} TBD</span>` : side ? `<span class="pv-team">${side.seed ? `<span class="pv-small">#${side.seed}</span> ` : ''}${esc(side.team)}</span>` : `<span class="pv-team tbd">${esc(label || 'TBD')}</span>`;
   const box = v => `<span class="pv-box">${v !== '' && v != null ? esc(v) : ''}</span>`;
   let lastT = null;
   if (sel !== 'bracket') h += `<section class="pv-section"><h2 class="pv-h">${sel === 'pool' ? 'Pool schedule' : 'Schedule'}</h2><table class="pv-table"><thead><tr><th>Time</th><th>Field</th><th>Game</th><th>Team</th><th>R</th><th></th><th>Team</th><th>R</th></tr></thead><tbody>` +
@@ -804,8 +818,8 @@ function renderPrint(sel = ui.printSel || 'both') {
     const match = m => `<div class="pv-match"><div class="pv-mmeta">G${m.num} · ${fmt(m.time)} · ${esc(fieldName(m.field))}</div>
       <div class="pv-mrow">${name(m.a, m.aLabel)}${box(m.sa)}</div><div class="pv-mrow">${name(m.b, m.bLabel)}${box(m.sb)}</div></div>`;
     const rounds = B.format === 'single'
-      ? B.rounds.map(r => ({ title: r[0].label, games: r.filter(m => !m.bye), byes: r.filter(m => m.bye).map(m => m.winner.team) }))
-      : B.rounds.map((r, i) => ({ title: `Round ${i + 1}`, games: r.games, byes: r.byes.map(b => b.team) }));
+      ? B.rounds.map(r => ({ title: r[0].label, games: r.filter(m => !m.bye), byes: r.filter(m => m.bye).map(m => sideName(m.winner)) }))
+      : B.rounds.map((r, i) => ({ title: `Round ${i + 1}`, games: r.games, byes: r.byes.map(sideName) }));
     h += `<section class="pv-section pv-keep"><h2 class="pv-h">${B.format === 'double' ? 'Double' : 'Single'} elimination bracket</h2><div class="pv-bracket">` +
       rounds.map(r => `<div class="pv-round"><h4>${esc(r.title)}</h4>${r.games.map(match).join('')}${r.byes.length ? `<p class="pv-small">Bye: ${r.byes.map(esc).join(', ')}</p>` : ''}</div>`).join('') + `</div></section>`;
   }
@@ -871,7 +885,8 @@ async function buildExport(sel, mode) {
         c.fillText(fit(c, fieldName(i.field).toUpperCase(), 68), x + cols.field, y + 21);
         if (i.kind === 'bracket') { c.fillText(`G${i.num}`, x + cols.game, y + 15); c.fillText(fit(c, i.label.toUpperCase(), 84), x + cols.game, y + 27); } else c.fillText(`G${i.num}`, x + cols.game, y + 21);
         const team = (side, label, tx) => {
-          if (side) { let ox = 0; if (side.seed) { setF(c, `600 10px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${side.seed}`, x + tx, y + 21); ox = 20; } setF(c, `${winnerOf(i) === side.team ? 800 : 600} 13px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, side.team, teamW - 46 - ox), x + tx + ox, y + 21); }
+          if (side && !side.team) { setF(c, `italic 500 12px ${FB}`); c.fillStyle = '#666'; c.fillText(`#${side.seed} TBD`, x + tx, y + 21); }
+          else if (side) { let ox = 0; if (side.seed) { setF(c, `600 10px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${side.seed}`, x + tx, y + 21); ox = 20; } setF(c, `${winnerOf(i) === side.team ? 800 : 600} 13px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, side.team, teamW - 46 - ox), x + tx + ox, y + 21); }
           else { setF(c, `italic 500 12px ${FB}`); c.fillStyle = '#666'; c.fillText(fit(c, label || 'TBD', teamW - 46), x + tx, y + 21); }
         };
         team(i.a, i.aLabel, cols.ta); box(c, x + cols.ba, y + 6, i.sa);
@@ -904,7 +919,8 @@ async function buildExport(sel, mode) {
       c.fillStyle = '#ddd'; c.fillRect(x, y + 17, MW, 0.75); c.fillRect(x + 4, y + 39, MW - 8, 0.75);
       [[m.a, m.aLabel, m.sa, 0], [m.b, m.bLabel, m.sb, 1]].forEach(([sd, lb, sc, k]) => {
         const ry = y + 18 + k * 22;
-        if (sd) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); setF(c, `${m.winner && m.winner.team === sd.team ? 800 : 600} 12px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, sd.team, MW - 70), x + 26, ry + 15); }
+        if (sd && !sd.team) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#666'; c.fillText('TBD', x + 26, ry + 15); }
+        else if (sd) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); setF(c, `${m.winner && m.winner.team === sd.team ? 800 : 600} 12px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, sd.team, MW - 70), x + 26, ry + 15); }
         else { setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#666'; c.fillText(fit(c, lb || 'TBD', MW - 50), x + 6, ry + 15); }
         rr(c, x + MW - 36, ry + 2, 30, 18, 3); c.strokeStyle = '#888'; c.stroke();
         if (sc !== '' && sc != null) { setF(c, `800 13px ${FD}`); c.fillStyle = '#111'; c.textAlign = 'center'; c.fillText(String(sc), x + MW - 21, ry + 16); c.textAlign = 'left'; }
@@ -921,7 +937,7 @@ async function buildExport(sel, mode) {
           setF(c, `700 10px ${FL}`, 1.4); c.fillStyle = '#555'; c.textAlign = 'center'; c.fillText(round[0].label.toUpperCase(), cx + MW / 2, y + 12); c.textAlign = 'left';
           round.forEach((m, i) => {
             const my = y + cy(r, i) - MH / 2;
-            if (m.bye) { setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#777'; c.fillText(fit(c, `Bye: #${m.winner.seed} ${m.winner.team}`, MW), cx + 6, y + cy(r, i) + 4); }
+            if (m.bye) { setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#777'; c.fillText(fit(c, `Bye: #${m.winner.seed} ${m.winner.team || 'TBD'}`, MW), cx + 6, y + cy(r, i) + 4); }
             else drawMatch(c, m, cx, my);
             if (r < R - 1) {
               const ny = y + cy(r + 1, Math.floor(i / 2)); c.strokeStyle = '#999'; c.lineWidth = 1.2; c.beginPath();
@@ -931,7 +947,7 @@ async function buildExport(sel, mode) {
         });
       };
     } else {
-      const cols = B.rounds.map((rd, i) => ({ title: `Round ${i + 1}`, games: rd.games, byes: rd.byes.map(b => b.team) }));
+      const cols = B.rounds.map((rd, i) => ({ title: `Round ${i + 1}`, games: rd.games, byes: rd.byes.map(sideName) }));
       const colH = col => 22 + col.games.length * (MH + GAP + 14) + (col.byes.length ? 18 : 0);
       bw = cols.length * MW + (cols.length - 1) * 16; bh = Math.max(...cols.map(colH));
       const gname = { w: 'WINNERS SIDE', e: 'ELIMINATION SIDE', c: 'CHAMPIONSHIP' };
@@ -1181,7 +1197,7 @@ function scheduleText() {
   let lastT = null;
   items.forEach(i => {
     if (i.t !== lastT) { lines.push(fmt(i.t)); lastT = i.t; }
-    const a = i.a ? i.a.team : (i.aLabel || 'TBD'), b = i.b ? i.b.team : (i.bLabel || 'TBD');
+    const a = i.a ? sideName(i.a) : (i.aLabel || 'TBD'), b = i.b ? sideName(i.b) : (i.bLabel || 'TBD');
     const sc = i.final ? `  ${i.sa}-${i.sb} Final` : '';
     lines.push(`  G${i.num} ${fieldName(i.field)}${i.kind === 'bracket' ? ' (' + i.label + ')' : ''}: ${a} vs ${b}${sc}`);
   });
@@ -1430,8 +1446,6 @@ function bind() {
   $('#bracketArea').addEventListener('click', async e => {
     const id = e.target.closest('button') && e.target.closest('button').id;
     if (id === 'buildBracketBtn') {
-      const left = state.games.filter(g => !isFinal(g)).length;
-      if (left && !(await ask('Pool play is not finished', `${left} pool game${left > 1 ? 's are' : ' is'} still missing a score. Build the bracket from the current standings anyway?`, 'Build anyway'))) return;
       buildBracket(); save(); render();
     }
     if (id === 'rebuildBtn' || id === 'reseedBtn') {
