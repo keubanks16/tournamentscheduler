@@ -699,7 +699,7 @@ function renderSchedule() {
     const fields = {}, teams = {};
     list.forEach(i => {
       if (fields[i.field]) issues.push(`${fmt(+t)}: G${fields[i.field]} and G${i.num} are both on ${fieldName(i.field)}.`); else fields[i.field] = i.num;
-      [i.a, i.b].forEach(s => { if (!s) return; if (teams[s.team]) issues.push(`${fmt(+t)}: ${s.team} is in G${teams[s.team]} and G${i.num} at the same time.`); else teams[s.team] = i.num; });
+      [i.a, i.b].forEach(s => { if (!known(s)) return; if (teams[s.team]) issues.push(`${fmt(+t)}: ${s.team} is in G${teams[s.team]} and G${i.num} at the same time.`); else teams[s.team] = i.num; });
     });
   });
   $('#conflicts').innerHTML = issues.length ? `<div class="banner warn"><p><strong>Schedule conflicts.</strong> ${issues.map(esc).join(' ')}</p></div>` : '';
