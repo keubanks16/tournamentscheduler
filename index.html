@@ -41,14 +41,16 @@
           <span>Menu</span>
         </button>
         <div id="menu" class="menu" role="menu" hidden>
+          <p class="menu-who" id="whoami" hidden></p>
           <button role="menuitem" data-act="install" class="needs-browser">Add to Home Screen</button>
           <button role="menuitem" data-act="copy">Copy schedule as text</button>
           <button role="menuitem" data-act="share" class="needs-top">Share live link</button>
-          <button role="menuitem" data-act="print" class="needs-top">Print this page</button>
+          <button role="menuitem" data-act="print">Print or save as PDF / image…</button>
           <button role="menuitem" data-act="export" class="needs-top">Download backup</button>
           <button role="menuitem" data-act="import">Restore from backup…</button>
           <hr>
-          <button role="menuitem" data-act="new" class="danger-text">Start a new tournament</button>
+          <button role="menuitem" data-act="new" class="danger-text needs-user">Start a new tournament</button>
+          <button role="menuitem" data-act="signout" class="needs-user">Sign out</button>
         </div>
       </div>
     </div>
@@ -231,6 +233,55 @@
       <button class="btn" id="modalCancel" type="button">Cancel</button>
       <button class="btn btn-primary" id="modalOk" type="button">OK</button>
     </div>
+  </div>
+</div>
+
+<!-- Sign in -->
+<div id="loginScreen" class="login" hidden>
+  <form class="login-card" id="loginForm" autocomplete="on" novalidate>
+    <img src="icons/apple-touch-icon.png" alt="" width="72" height="72" class="login-icon">
+    <h1 class="login-title">Tournament Manager</h1>
+    <p class="note">Sign in to run your tournament.</p>
+    <label class="fld">Username<input id="loginUser" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+    <label class="fld">Password<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
+    <p class="note err" id="loginErr" aria-live="polite"></p>
+    <button class="btn btn-primary login-btn" type="submit">Sign in</button>
+    <p class="note login-foot">Following a live link? You don't need to sign in. Just open the link you were sent.</p>
+  </form>
+</div>
+
+<!-- Print / save sheet -->
+<div id="exportSheet" class="overlay" hidden>
+  <div class="modal-card install-card" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <h2 id="exportTitle" class="h-card">Print or save</h2>
+    <fieldset class="seg-field">
+      <legend class="h-sub">What to include</legend>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="exSel" value="pool" checked><span>Pool schedule</span></label>
+        <label><input type="radio" name="exSel" value="bracket" id="exSelBracket"><span>Bracket only</span></label>
+        <label><input type="radio" name="exSel" value="both"><span>Both</span></label>
+      </div>
+      <p class="note" id="exNote"></p>
+    </fieldset>
+    <fieldset class="seg-field">
+      <legend class="h-sub">How</legend>
+      <div class="ex-actions">
+        <button class="btn" type="button" id="exPrint">Print</button>
+        <button class="btn" type="button" id="exPdf">Save as PDF</button>
+        <button class="btn" type="button" id="exImg">Save as image</button>
+      </div>
+    </fieldset>
+    <div id="exResult" class="ex-result" hidden>
+      <img id="exPreview" alt="Preview of the saved file">
+      <div>
+        <p class="note" id="exStatus"></p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button" id="exSave">Save</button>
+          <a class="btn" id="exOpen" target="_blank" rel="noopener">Open</a>
+        </div>
+      </div>
+    </div>
+    <div class="actions end"><button class="btn" id="exClose" type="button">Close</button></div>
   </div>
 </div>
 

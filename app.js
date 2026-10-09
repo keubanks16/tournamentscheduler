@@ -5,6 +5,17 @@
 
 const KEY = 'tournament-manager-v5';
 const OLD_KEY = 'tournament-manager-v4-all-teams';
+const SESSION_KEY = 'tm-session';
+/* Sign-in accounts. Only a SHA-256 of "username:password" is stored here. */
+const ACCOUNTS = {
+  luke: { hash: '1b4494ee699f677d90981675c58654af3b8fac0683d035e6755d585182feca1d', name: 'Luke', role: 'organizer', profile: 'butler' },
+  admin: { hash: '8da193366e1554c08b2870c50f737b9587c3372b656151c4a96028af26f51334', name: 'Admin', role: 'admin' }
+};
+let user = null;   // the signed-in account key ('luke' | 'admin')
+const account = () => (user && ACCOUNTS[user]) || null;
+const isAdmin = () => !!account() && account().role === 'admin';
+const lockedProfile = () => (account() && account().profile) || null;
+const userKey = () => user ? `${KEY}:${user}` : KEY;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -55,7 +66,7 @@ function defaults() {
 }
 let state = defaults();
 let viewOnly = false;
-const ui = { team: '', edit: false };
+const ui = { team: '', edit: false, printSel: 'both' };
 
 function normalize(s) {
   const d = defaults();
@@ -87,14 +98,26 @@ function migrateOld(raw) {
     return n;
   } catch (e) { return null; }
 }
+function freshFor(profileKey) {
+  const s = defaults(), P = PROFILES[profileKey];
+  s.profile = profileKey;
+  if (P && P.event) { s.name = P.event.name; s.date = P.event.date; s.location = P.event.location; }
+  return s;
+}
 function load() {
-  const raw = store.get(KEY);
-  if (raw) { try { state = normalize(JSON.parse(raw)); return; } catch (e) { /* fall through */ } }
+  const raw = store.get(userKey());
+  if (raw) { try { state = normalize(JSON.parse(raw)); enforceProfile(); return; } catch (e) { /* fall through */ } }
+  if (lockedProfile()) { state = freshFor(lockedProfile()); persist(); return; }
+  // Admin (or no account): pick up a tournament saved before sign-in existed
+  const legacy = store.get(KEY);
+  if (legacy) { try { state = normalize(JSON.parse(legacy)); persist(); return; } catch (e) { /* fall through */ } }
   const old = store.get(OLD_KEY);
-  if (old) { const m = migrateOld(old); if (m && m.teams.length) { state = normalize(m); save(); return; } }
+  if (old) { const m = migrateOld(old); if (m && m.teams.length) { state = normalize(m); persist(); return; } }
   state = makeDemo();
 }
-function save() { if (viewOnly) return; store.set(KEY, JSON.stringify(state)); queueSync(); }
+function enforceProfile() { if (lockedProfile()) state.profile = lockedProfile(); }
+function persist() { if (!viewOnly) store.set(userKey(), JSON.stringify(state)); }
+function save() { if (viewOnly) return; persist(); queueSync(); }
 
 /* ============================ Time ============================ */
 const toMin = t => { if (typeof t === 'number') return t; const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
@@ -474,6 +497,9 @@ function renderMast() {
     $('#progBar').style.width = (B && B.champion ? 100 : Math.round(done / items.length * 100)) + '%';
   } else $('#prog').hidden = true;
   renderLiveChip();
+  const who = $('#whoami');
+  if (who) { who.hidden = !user || viewOnly; who.textContent = account() ? `Signed in as ${account().name}${isAdmin() ? ' (admin)' : ''}` : ''; }
+  $$('.needs-user').forEach(b => { b.hidden = !user || viewOnly; });
   $$('.needs-top').forEach(b => { b.hidden = EMBEDDED; });
   $$('.needs-browser').forEach(b => { b.hidden = EMBEDDED || STANDALONE; });
 }
@@ -501,7 +527,7 @@ function renderBanner() {
     el.hidden = false;
   } else if (viewOnly) {
     el.className = 'banner';
-    el.innerHTML = `<p>You're viewing a shared snapshot. Changes here won't be saved.</p><div class="actions"><button class="btn btn-sm" data-b="keep">Save as my tournament</button><button class="btn btn-sm" data-b="leave">Back to mine</button></div>`;
+    el.innerHTML = `<p>You're viewing a shared snapshot. Changes here won't be saved.</p><div class="actions">${user ? '<button class="btn btn-sm" data-b="keep">Save as my tournament</button><button class="btn btn-sm" data-b="leave">Back to mine</button>' : ''}</div>`;
     el.hidden = false;
   } else if (state.demo) {
     el.className = 'banner';
@@ -548,8 +574,9 @@ function renderSetup() {
   if (document.activeElement !== $('#tName')) $('#tName').value = state.name;
   $('#tDate').value = state.date || '';
   $('#tProfile').value = PROFILES[state.profile] ? state.profile : 'standard';
+  $('#tProfile').closest('label').hidden = !!lockedProfile();
   if (document.activeElement !== $('#tLocation')) $('#tLocation').value = state.location || '';
-  $('#profileNote').textContent = profileOf().presenter ? `${profileOf().label} colors, badge and event details are applied everywhere, including live links.` : '';
+  $('#profileNote').textContent = lockedProfile() ? `Tournament profile: ${profileOf().label}.` : profileOf().presenter ? `${profileOf().label} colors, badge and event details are applied everywhere, including live links.` : '';
   if (document.activeElement !== $('#teamsInput')) $('#teamsInput').value = state.teams.join('\n');
   $('#gamesPerTeam').value = String(S.gamesPerTeam);
   $('#startTime').value = S.startTime;
@@ -739,22 +766,23 @@ function renderBracket() {
 }
 
 /* ============================ Printout ============================ */
-function renderPrint() {
+function renderPrint(sel = ui.printSel || 'both') {
   const pv = $('#printView'); if (!pv) return;
-  const P = profileOf(), { items, B } = allItems();
+  const P = profileOf(), all = allItems(), B = all.B;
+  const items = sel === 'pool' ? all.items.filter(i => i.kind === 'pool') : all.items;
   const meta = [state.date ? fmtDate(state.date) : '', state.location || '', `${state.order.length} teams · ${state.settings.fields.length} field${state.settings.fields.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
   let h = `<header class="pv-head">${P.logo ? `<img src="${esc(P.logo)}" alt="">` : ''}<div>
     ${P.presenter ? `<p class="pv-eyebrow">${esc(P.presenter)}</p>` : ''}
     <h1 class="pv-name">${esc(state.name || 'Tournament')}</h1>
     <p class="pv-meta">${esc(meta)}</p>
     ${P.cause ? `<p class="pv-cause">${RIBBON}${esc(P.cause)}</p>` : ''}</div></header>`;
-  if (B && B.champion) h += `<div class="pv-champ">Champion: ${esc(B.champion.team)}</div>`;
+  if (B && B.champion && sel !== 'pool') h += `<div class="pv-champ">Champion: ${esc(B.champion.team)}</div>`;
 
   // Schedule: one row per game, blank boxes to write scores in
   const name = (side, label) => side ? `<span class="pv-team">${side.seed ? `<span class="pv-small">#${side.seed}</span> ` : ''}${esc(side.team)}</span>` : `<span class="pv-team tbd">${esc(label || 'TBD')}</span>`;
   const box = v => `<span class="pv-box">${v !== '' && v != null ? esc(v) : ''}</span>`;
   let lastT = null;
-  h += `<section class="pv-section"><h2 class="pv-h">Schedule</h2><table class="pv-table"><thead><tr><th>Time</th><th>Field</th><th>Game</th><th>Team</th><th>R</th><th></th><th>Team</th><th>R</th></tr></thead><tbody>` +
+  if (sel !== 'bracket') h += `<section class="pv-section"><h2 class="pv-h">${sel === 'pool' ? 'Pool schedule' : 'Schedule'}</h2><table class="pv-table"><thead><tr><th>Time</th><th>Field</th><th>Game</th><th>Team</th><th>R</th><th></th><th>Team</th><th>R</th></tr></thead><tbody>` +
     items.map(i => {
       const first = i.t !== lastT; lastT = i.t;
       return `<tr class="${first ? 'pv-slot' : ''}"><td class="pv-time">${first ? fmt(i.t) : ''}</td><td class="pv-small">${esc(fieldName(i.field))}</td>
@@ -764,13 +792,13 @@ function renderPrint() {
 
   // Standings
   const rows = rankTeams();
-  if (state.games.some(isFinal)) {
+  if (sel !== 'bracket' && state.games.some(isFinal)) {
     h += `<section class="pv-section pv-keep"><h2 class="pv-h">Pool standings</h2><table class="pv-table pv-num"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PCT</th><th>RF</th><th>RA</th><th>RD</th></tr></thead><tbody>` +
       rows.map((r, i) => `<tr><td>${i + 1}</td><td class="pv-team">${esc(r.team)}</td><td>${r.w}</td><td>${r.l}</td><td>${r.t}</td><td>${pctStr(r.pct)}</td><td>${r.rf}</td><td>${r.ra}</td><td>${r.rd > 0 ? '+' : ''}${r.rd}</td></tr>`).join('') + `</tbody></table></section>`;
   }
 
   // Bracket
-  if (B) {
+  if (B && sel !== 'pool') {
     const match = m => `<div class="pv-match"><div class="pv-mmeta">G${m.num} · ${fmt(m.time)} · ${esc(fieldName(m.field))}</div>
       <div class="pv-mrow">${name(m.a, m.aLabel)}${box(m.sa)}</div><div class="pv-mrow">${name(m.b, m.bLabel)}${box(m.sb)}</div></div>`;
     const rounds = B.format === 'single'
@@ -782,6 +810,230 @@ function renderPrint() {
   const liveLink = state.live && !viewOnly ? `${location.host}${location.pathname}#live=${state.live.id}` : '';
   h += `<footer class="pv-foot"><span class="pv-thanks">${esc(P.thanks || '')}</span><span>${liveLink ? 'Live scores: ' + esc(liveLink) : esc(location.host)}</span></footer>`;
   pv.innerHTML = h;
+}
+
+/* ============================ PDF & image export ============================ */
+const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+const RIBBON_PATH = 'M12 1.5c-3.3 0-5.6 2.4-5.6 5.6 0 2.2 1.1 4.6 2.9 7.5L2.6 26.2l3.6 2.6 5.8-9.6 5.8 9.6 3.6-2.6-6.7-11.6c1.8-2.9 2.9-5.3 2.9-7.5 0-3.2-2.3-5.6-5.6-5.6Zm0 3.4c1.3 0 2.2 1 2.2 2.3 0 1.3-.8 3-2.2 5.3-1.4-2.3-2.2-4-2.2-5.3 0-1.3.9-2.3 2.2-2.3Z';
+async function buildExport(sel, mode) {
+  const W = 816, H = 1056, M = 40, CW = W - 2 * M, FOOT = 26, PAGE_H = H - 2 * M - FOOT;
+  const P = profileOf(), accent = P.cause ? '#d81b7a' : '#0a2342';
+  const FD = '"Big Shoulders Display", Impact, "Arial Narrow", sans-serif', FB = 'Barlow, "Segoe UI", Roboto, Arial, sans-serif', FL = '"Barlow Condensed", "Arial Narrow", Arial, sans-serif';
+  try { await Promise.all([`900 30px ${FD}`, `800 16px ${FD}`, `600 12px ${FB}`, `700 12px ${FB}`, `600 11px ${FL}`, `700 11px ${FL}`].map(f => document.fonts.load(f))); } catch (e) { /* use fallbacks */ }
+  const logo = P.logo ? await loadImg(P.logo).catch(() => null) : null;
+  const mctx = document.createElement('canvas').getContext('2d');
+  const setF = (c, f, ls = 0) => { c.font = f; if ('letterSpacing' in c) c.letterSpacing = ls + 'px'; };
+  const fit = (c, t, w) => { t = String(t); if (c.measureText(t).width <= w) return t; while (t.length > 1 && c.measureText(t + '…').width > w) t = t.slice(0, -1); return t + '…'; };
+  const wrap = (c, t, w) => { const out = []; let line = ''; String(t).split(' ').forEach(word => { const test = line ? line + ' ' + word : word; if (c.measureText(test).width > w && line) { out.push(line); line = word; } else line = test; }); if (line) out.push(line); return out; };
+  const ribbon = (c, x, y, h, color) => { c.save(); c.translate(x, y); c.scale(h / 32, h / 32); c.fillStyle = color; c.fill(new Path2D(RIBBON_PATH)); c.restore(); };
+  const rr = (c, x, y, w, h, r) => { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); };
+  const box = (c, x, y, v) => { rr(c, x, y, 34, 22, 3); c.strokeStyle = '#777'; c.lineWidth = 1; c.stroke(); if (v !== '' && v != null) { setF(c, `800 16px ${FD}`); c.fillStyle = '#111'; c.textAlign = 'center'; c.fillText(String(v), x + 17, y + 17); c.textAlign = 'left'; } };
+  const blocks = [];
+  const { items: allIt, B } = allItems();
+
+  // Header
+  {
+    const tx = logo ? 92 : 0, tw = CW - tx;
+    setF(mctx, `900 30px ${FD}`); const nameLines = wrap(mctx, (state.name || 'Tournament').toUpperCase(), tw);
+    const meta = [state.date ? fmtDate(state.date) : '', state.location || '', `${state.order.length} teams · ${state.settings.fields.length} field${state.settings.fields.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ').toUpperCase();
+    setF(mctx, `600 11.5px ${FL}`, 0.6); const metaLines = wrap(mctx, meta, tw);
+    const textH = (P.presenter ? 16 : 0) + nameLines.length * 30 + 6 + metaLines.length * 15 + (P.cause ? 18 : 0);
+    const h = Math.max(logo ? 80 : 0, textH) + 16;
+    blocks.push({ h, draw(c, x, y) {
+      if (logo) { const s = 80 / Math.max(logo.width, logo.height); c.drawImage(logo, x, y + (h - 16 - logo.height * s) / 2, logo.width * s, logo.height * s); }
+      let ty = y;
+      if (P.presenter) { setF(c, `700 11px ${FL}`, 1.6); c.fillStyle = accent; c.fillText(P.presenter.toUpperCase(), x + tx, ty + 11); ty += 16; }
+      setF(c, `900 30px ${FD}`); c.fillStyle = '#111'; nameLines.forEach(l => { ty += 30; c.fillText(l, x + tx, ty - 3); }); ty += 6;
+      setF(c, `600 11.5px ${FL}`, 0.6); c.fillStyle = '#444'; metaLines.forEach(l => { ty += 15; c.fillText(l, x + tx, ty - 3); });
+      if (P.cause) { ribbon(c, x + tx, ty + 3, 13, accent); setF(c, `700 11.5px ${FL}`, 0.6); c.fillStyle = accent; c.fillText(P.cause.toUpperCase(), x + tx + 13, ty + 14); }
+      c.fillStyle = accent; c.fillRect(x, y + h - 6, CW, 3);
+    } });
+  }
+  if (B && B.champion && sel !== 'pool') blocks.push({ h: 48, draw(c, x, y) { rr(c, x, y + 6, CW, 34, 6); c.strokeStyle = accent; c.lineWidth = 2; c.stroke(); setF(c, `800 17px ${FD}`); c.fillStyle = '#111'; c.fillText(fit(c, `CHAMPION: ${B.champion.team.toUpperCase()}`, CW - 24), x + 12, y + 29); } });
+  const title = t => blocks.push({ h: 34, keepNext: true, draw(c, x, y) { setF(c, `800 18px ${FD}`); c.fillStyle = '#111'; c.fillText(t.toUpperCase(), x, y + 26); } });
+
+  // Schedule table
+  if (sel !== 'bracket') {
+    const items = sel === 'pool' ? allIt.filter(i => i.kind === 'pool') : allIt;
+    const cols = { time: 0, field: 78, game: 150, ta: 238 }; const teamW = (CW - 238 - 34 - 26 - 34 - 12) / 2;
+    cols.ba = cols.ta + teamW; cols.vs = cols.ba + 40; cols.tb = cols.vs + 22; cols.bb = cols.tb + teamW;
+    const head = { h: 22, head: true, draw(c, x, y) { setF(c, `700 9.5px ${FL}`, 1.4); c.fillStyle = '#555'; [['TIME', 'time'], ['FIELD', 'field'], ['GAME', 'game'], ['TEAM', 'ta'], ['R', 'ba'], ['TEAM', 'tb'], ['R', 'bb']].forEach(([t, k]) => c.fillText(t, x + cols[k], y + 14)); c.fillStyle = '#111'; c.fillRect(x, y + 20, CW, 1.5); } };
+    title(sel === 'pool' ? 'Pool schedule' : 'Schedule'); blocks.push(head);
+    let lastT = null;
+    items.forEach(i => {
+      const first = i.t !== lastT; lastT = i.t;
+      blocks.push({ h: 34, row: true, tableHead: head, draw(c, x, y) {
+        c.fillStyle = first ? '#888' : '#ccc'; c.fillRect(x, y, CW, first ? 1.5 : 0.75);
+        if (first) { setF(c, `800 14px ${FD}`); c.fillStyle = '#111'; c.fillText(fmt(i.t), x + cols.time, y + 22); }
+        setF(c, `600 10px ${FL}`, 0.6); c.fillStyle = '#555';
+        c.fillText(fit(c, fieldName(i.field).toUpperCase(), 68), x + cols.field, y + 21);
+        if (i.kind === 'bracket') { c.fillText(`G${i.num}`, x + cols.game, y + 15); c.fillText(fit(c, i.label.toUpperCase(), 84), x + cols.game, y + 27); } else c.fillText(`G${i.num}`, x + cols.game, y + 21);
+        const team = (side, label, tx) => {
+          if (side) { let ox = 0; if (side.seed) { setF(c, `600 10px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${side.seed}`, x + tx, y + 21); ox = 20; } setF(c, `${winnerOf(i) === side.team ? 800 : 600} 13px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, side.team, teamW - 46 - ox), x + tx + ox, y + 21); }
+          else { setF(c, `italic 500 12px ${FB}`); c.fillStyle = '#666'; c.fillText(fit(c, label || 'TBD', teamW - 46), x + tx, y + 21); }
+        };
+        team(i.a, i.aLabel, cols.ta); box(c, x + cols.ba, y + 6, i.sa);
+        setF(c, `500 9px ${FB}`); c.fillStyle = '#888'; c.fillText('vs', x + cols.vs, y + 21);
+        team(i.b, i.bLabel, cols.tb); box(c, x + cols.bb, y + 6, i.sb);
+      } });
+    });
+  }
+  // Standings
+  if (sel !== 'bracket' && state.games.some(isFinal)) {
+    const rows = rankTeams(); const nums = [['W', 'w'], ['L', 'l'], ['T', 't'], ['PCT', 'pct'], ['RF', 'rf'], ['RA', 'ra'], ['RD', 'rd']];
+    const colX = k => CW - (nums.length - k) * 58 + 50;
+    const head = { h: 22, head: true, draw(c, x, y) { setF(c, `700 9.5px ${FL}`, 1.4); c.fillStyle = '#555'; c.fillText('#', x, y + 14); c.fillText('TEAM', x + 30, y + 14); c.textAlign = 'right'; nums.forEach(([t], k) => c.fillText(t, x + colX(k), y + 14)); c.textAlign = 'left'; c.fillStyle = '#111'; c.fillRect(x, y + 20, CW, 1.5); } };
+    const tb = { h: 34, keepNext: true, draw(c, x, y) { setF(c, `800 18px ${FD}`); c.fillStyle = '#111'; c.fillText('POOL STANDINGS', x, y + 26); } };
+    blocks.push({ ...tb, keepNext: true, keepAll: rows.length }); blocks.push(head);
+    rows.forEach((r, i) => blocks.push({ h: 26, row: true, tableHead: head, draw(c, x, y) {
+      setF(c, `600 12.5px ${FB}`); c.fillStyle = '#111'; c.fillText(String(i + 1), x, y + 17); setF(c, `700 12.5px ${FB}`); c.fillText(fit(c, r.team, CW - 30 - nums.length * 58), x + 30, y + 17);
+      setF(c, `600 12.5px ${FB}`); c.textAlign = 'right';
+      nums.forEach(([, k], j) => c.fillText(k === 'pct' ? pctStr(r.pct) : k === 'rd' ? (r.rd > 0 ? '+' : '') + r.rd : String(r[k]), x + colX(j), y + 17));
+      c.textAlign = 'left'; c.fillStyle = '#ddd'; c.fillRect(x, y + 25, CW, 0.75);
+    } }));
+  }
+  // Bracket
+  if (B && sel !== 'pool') {
+    title(`${B.format === 'double' ? 'Double' : 'Single'} elimination bracket`);
+    const MW = 186, MH = 62, GAP = 12, CG = 30;
+    const drawMatch = (c, m, x, y) => {
+      rr(c, x, y, MW, MH, 4); c.fillStyle = '#fff'; c.fill(); c.strokeStyle = '#999'; c.lineWidth = 1; c.stroke();
+      setF(c, `600 9px ${FL}`, 0.5); c.fillStyle = '#555'; c.fillText(fit(c, `G${m.num} · ${fmt(m.time)} · ${fieldName(m.field)}`.toUpperCase(), MW - 12), x + 6, y + 12);
+      c.fillStyle = '#ddd'; c.fillRect(x, y + 17, MW, 0.75); c.fillRect(x + 4, y + 39, MW - 8, 0.75);
+      [[m.a, m.aLabel, m.sa, 0], [m.b, m.bLabel, m.sb, 1]].forEach(([sd, lb, sc, k]) => {
+        const ry = y + 18 + k * 22;
+        if (sd) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); setF(c, `${m.winner && m.winner.team === sd.team ? 800 : 600} 12px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, sd.team, MW - 70), x + 26, ry + 15); }
+        else { setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#666'; c.fillText(fit(c, lb || 'TBD', MW - 50), x + 6, ry + 15); }
+        rr(c, x + MW - 36, ry + 2, 30, 18, 3); c.strokeStyle = '#888'; c.stroke();
+        if (sc !== '' && sc != null) { setF(c, `800 13px ${FD}`); c.fillStyle = '#111'; c.textAlign = 'center'; c.fillText(String(sc), x + MW - 21, ry + 16); c.textAlign = 'left'; }
+      });
+    };
+    let bw, bh, drawB;
+    if (B.format === 'single') {
+      const R = B.rounds.length, slot = MH + GAP, n0 = B.rounds[0].length;
+      bw = R * MW + (R - 1) * CG; bh = 22 + n0 * slot;
+      const cy = (r, i) => 22 + (i + 0.5) * slot * 2 ** r;
+      drawB = (c, x, y) => {
+        B.rounds.forEach((round, r) => {
+          const cx = x + r * (MW + CG);
+          setF(c, `700 10px ${FL}`, 1.4); c.fillStyle = '#555'; c.textAlign = 'center'; c.fillText(round[0].label.toUpperCase(), cx + MW / 2, y + 12); c.textAlign = 'left';
+          round.forEach((m, i) => {
+            const my = y + cy(r, i) - MH / 2;
+            if (m.bye) { setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#777'; c.fillText(fit(c, `Bye: #${m.winner.seed} ${m.winner.team}`, MW), cx + 6, y + cy(r, i) + 4); }
+            else drawMatch(c, m, cx, my);
+            if (r < R - 1) {
+              const ny = y + cy(r + 1, Math.floor(i / 2)); c.strokeStyle = '#999'; c.lineWidth = 1.2; c.beginPath();
+              c.moveTo(cx + MW, y + cy(r, i)); c.lineTo(cx + MW + CG / 2, y + cy(r, i)); c.lineTo(cx + MW + CG / 2, ny); c.lineTo(cx + MW + CG, ny); c.stroke();
+            }
+          });
+        });
+      };
+    } else {
+      const cols = B.rounds.map((rd, i) => ({ title: `Round ${i + 1}`, games: rd.games, byes: rd.byes.map(b => b.team) }));
+      const colH = col => 22 + col.games.length * (MH + GAP + 14) + (col.byes.length ? 18 : 0);
+      bw = cols.length * MW + (cols.length - 1) * 16; bh = Math.max(...cols.map(colH));
+      const gname = { w: 'WINNERS SIDE', e: 'ELIMINATION SIDE', c: 'CHAMPIONSHIP' };
+      drawB = (c, x, y) => cols.forEach((col, k) => {
+        const cx = x + k * (MW + 16); let yy = y;
+        setF(c, `700 10px ${FL}`, 1.4); c.fillStyle = '#555'; c.fillText(col.title.toUpperCase(), cx, yy + 12); yy += 22;
+        col.games.forEach(g => { setF(c, `700 9px ${FL}`, 1.2); c.fillStyle = g.group === 'e' ? '#9a5b00' : g.group === 'c' ? accent : '#16804c'; c.fillText(gname[g.group], cx, yy + 10); yy += 14; drawMatch(c, g, cx, yy); yy += MH + GAP; });
+        if (col.byes.length) { setF(c, `italic 500 10.5px ${FB}`); c.fillStyle = '#666'; c.fillText(fit(c, 'Bye: ' + col.byes.join(', '), MW), cx, yy + 12); }
+      });
+    }
+    const maxH = mode === 'pdf' ? PAGE_H - 34 : Infinity;
+    const sc = Math.min(1, CW / bw, maxH / bh);
+    blocks.push({ h: bh * sc + 8, draw(c, x, y) { c.save(); c.translate(x + (CW - bw * sc) / 2, y); c.scale(sc, sc); drawB(c, 0, 0); c.restore(); } });
+  }
+
+  const footer = (c, y, page, pages) => {
+    c.fillStyle = '#bbb'; c.fillRect(M, y, CW, 1);
+    setF(c, `600 9.5px ${FL}`, 1); c.fillStyle = accent; if (P.thanks) c.fillText(fit(c, P.thanks.toUpperCase(), CW - 120), M, y + 16);
+    c.fillStyle = '#555'; c.textAlign = 'right'; c.fillText(pages > 1 ? `PAGE ${page} OF ${pages}` : location.host.toUpperCase(), M + CW, y + 16); c.textAlign = 'left';
+  };
+  const paint = (w, h, scale, list, footY, page, pages) => {
+    const cv = document.createElement('canvas'); cv.width = Math.round(w * scale); cv.height = Math.round(h * scale);
+    const c = cv.getContext('2d'); c.scale(scale, scale); c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); c.textBaseline = 'alphabetic';
+    list.forEach(({ b, y }) => b.draw(c, M, M + y)); footer(c, footY, page, pages); return cv;
+  };
+
+  if (mode === 'image') {
+    const total = blocks.reduce((a, b) => a + b.h, 0) + 2 * M + FOOT;
+    const scale = Math.min(2, Math.sqrt(16e6 / (W * total)));
+    let y = 0; const list = blocks.map(b => { const o = { b, y }; y += b.h; return o; });
+    return [paint(W, total, scale, list, total - M - FOOT + 6, 1, 1)];
+  }
+  // paginate for PDF: rows never split; titles stay with what follows; table headers repeat
+  const pages = [[]]; let y = 0;
+  blocks.forEach((b, i) => {
+    let need = b.h; if (b.keepNext && blocks[i + 1]) need += blocks[i + 1].h + (blocks[i + 2] && blocks[i + 1].head ? blocks[i + 2].h : 0);
+    if (b.keepAll) need = b.h + 22 + b.keepAll * 26;
+    if (y > 0 && y + Math.min(need, PAGE_H) > PAGE_H) { pages.push([]); y = 0; if (b.row && b.tableHead) { pages[pages.length - 1].push({ b: b.tableHead, y }); y += b.tableHead.h; } }
+    pages[pages.length - 1].push({ b, y }); y += b.h;
+  });
+  return pages.map((list, k) => paint(W, H, 2, list, H - M - FOOT + 6, k + 1, pages.length));
+}
+async function canvasesToPdf(canvases) {
+  const enc = new TextEncoder(), parts = [], offs = []; let len = 0;
+  const push = d => { const b = typeof d === 'string' ? enc.encode(d) : d; parts.push(b); len += b.length; };
+  const imgs = await Promise.all(canvases.map(cv => new Promise(res => cv.toBlob(async b => res({ bytes: new Uint8Array(await b.arrayBuffer()), w: cv.width, h: cv.height }), 'image/jpeg', 0.92))));
+  const N = imgs.length, objCount = 2 + N * 3;
+  push('%PDF-1.4\n%âãÏÓ\n');
+  const obj = (n, f) => { offs[n] = len; push(`${n} 0 obj\n`); f(); push('\nendobj\n'); };
+  obj(1, () => push('<< /Type /Catalog /Pages 2 0 R >>'));
+  obj(2, () => push(`<< /Type /Pages /Kids [${imgs.map((_, i) => `${3 + i * 3} 0 R`).join(' ')}] /Count ${N} >>`));
+  imgs.forEach((im, i) => {
+    const pg = 3 + i * 3, ct = pg + 1, ix = pg + 2, cmd = `q 612 0 0 792 0 0 cm /Im${i} Do Q`;
+    obj(pg, () => push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im${i} ${ix} 0 R >> >> /Contents ${ct} 0 R >>`));
+    obj(ct, () => push(`<< /Length ${cmd.length} >>\nstream\n${cmd}\nendstream`));
+    obj(ix, () => { push(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bytes.length} >>\nstream\n`); push(im.bytes); push('\nendstream'); });
+  });
+  const xref = len;
+  push(`xref\n0 ${objCount + 1}\n0000000000 65535 f \n` + Array.from({ length: objCount }, (_, k) => String(offs[k + 1]).padStart(10, '0') + ' 00000 n \n').join(''));
+  push(`trailer\n<< /Size ${objCount + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, { type: 'application/pdf' });
+}
+let exportFile = null, exportUrl = '';
+function openExport() {
+  const B = resolveBracket();
+  $('#exSelBracket').disabled = !B;
+  const both = $('input[name="exSel"][value="both"]');
+  const cur = $(`input[name="exSel"][value="${ui.printSel}"]`);
+  if (cur && !cur.disabled) cur.checked = true; else $('input[name="exSel"][value="pool"]').checked = true;
+  both.disabled = false;
+  $('#exNote').textContent = B ? '' : 'The bracket is not built yet, so only the pool schedule is available.';
+  $('#exResult').hidden = true;
+  $('#exportSheet').hidden = false;
+  $('#exPrint').focus();
+}
+function exportSel() { const r = $('input[name="exSel"]:checked'); return r ? r.value : 'both'; }
+async function runExport(mode) {
+  const sel = exportSel(); ui.printSel = sel;
+  const res = $('#exResult'), st = $('#exStatus'), saveB = $('#exSave'), open = $('#exOpen');
+  res.hidden = false; st.textContent = mode === 'pdf' ? 'Creating PDF…' : 'Creating image…'; saveB.disabled = true; open.hidden = true; $('#exPreview').removeAttribute('src');
+  try {
+    const canvases = await buildExport(sel, mode);
+    const base = `${(state.name || 'tournament').replace(/[^\w-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase()}-${sel === 'both' ? 'schedule-and-bracket' : sel === 'pool' ? 'pool-schedule' : 'bracket'}`;
+    let blob;
+    if (mode === 'pdf') blob = await canvasesToPdf(canvases);
+    else blob = await new Promise(r => canvases[0].toBlob(r, 'image/png'));
+    if (exportUrl) URL.revokeObjectURL(exportUrl);
+    exportUrl = URL.createObjectURL(blob);
+    exportFile = new File([blob], `${base}.${mode === 'pdf' ? 'pdf' : 'png'}`, { type: blob.type });
+    $('#exPreview').src = canvases[0].toDataURL('image/jpeg', 0.6);
+    st.textContent = mode === 'pdf' ? `PDF ready · ${canvases.length} page${canvases.length > 1 ? 's' : ''}` : 'Image ready';
+    saveB.textContent = mode === 'pdf' ? 'Save PDF' : 'Save image';
+    saveB.disabled = false; open.href = exportUrl; open.hidden = false; open.setAttribute('download', exportFile.name);
+    saveB.focus();
+  } catch (e) { st.textContent = 'Could not create the file on this device. Try Print instead.'; }
+}
+function saveExport() {
+  if (!exportFile) return;
+  // Called straight from the tap so iPhone allows the share sheet (Save Image / Save to Files).
+  if (navigator.canShare && navigator.canShare({ files: [exportFile] })) {
+    navigator.share({ files: [exportFile], title: state.name || 'Tournament' }).catch(er => { if (er && er.name !== 'AbortError') $('#exOpen').click(); });
+  } else {
+    const a = document.createElement('a'); a.href = exportUrl; a.download = exportFile.name; document.body.appendChild(a); a.click(); a.remove();
+  }
 }
 
 /* ============================ Overlays ============================ */
@@ -847,7 +1099,7 @@ async function pushLive() {
   sync.inflight = true; setSync('pending');
   try {
     const r = await fetch(`${LIVE_API}/t/${state.live.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Edit-Key': state.live.key }, body });
-    if (r.status === 403 || r.status === 404) { state.live = null; store.set(KEY, JSON.stringify(state)); toast('The live link was turned off.'); setSync('ok'); return; }
+    if (r.status === 403 || r.status === 404) { state.live = null; persist(); toast('The live link was turned off.'); setSync('ok'); return; }
     if (!r.ok) throw new Error('http ' + r.status);
     sync.lastBody = body; setSync('ok');
   } catch (e) {
@@ -871,7 +1123,7 @@ async function goLive() {
     if (!r.ok) throw new Error('http ' + r.status);
     const j = await r.json();
     state.live = { id: j.id, key: j.key }; sync.lastBody = body; sync.status = 'ok';
-    store.set(KEY, JSON.stringify(state)); render(); renderShare();
+    persist(); render(); renderShare();
     (navigator.share ? $('#shareNative') : $('#shareCopy')).focus();
   } catch (e) {
     $('#shareErr').textContent = navigator.onLine === false ? 'You are offline. Connect to the internet to turn on the live link.' : 'The live service did not answer. Try again in a minute.';
@@ -996,15 +1248,16 @@ function bind() {
   menu.addEventListener('click', async e => {
     const b = e.target.closest('[data-act]'); if (!b) return; closeMenu();
     const act = b.dataset.act;
+    if (act === 'signout') signOut();
     if (act === 'install') openInstall();
     if (act === 'copy') copyText(scheduleText(), 'Schedule copied. Paste it into your team chat.');
-    if (act === 'print') { renderPrint(); window.print(); }
+    if (act === 'print') openExport();
     if (act === 'export') download(`${(state.name || 'tournament').replace(/[^\w-]+/g, '-').toLowerCase()}-backup.json`, JSON.stringify(state, null, 2));
     if (act === 'import') $('#importFile').click();
     if (act === 'share') openShare();
     if (act === 'new') {
       if (await ask('Start a new tournament?', 'This clears every team, game and score saved in this browser. Download a backup first if you want to keep it.', 'Clear everything', true)) {
-        const keep = state.settings, keepProfile = state.profile; state = defaults(); state.profile = keepProfile; state.settings = { ...state.settings, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
+        const keep = state.settings, keepProfile = state.profile; state = lockedProfile() ? freshFor(lockedProfile()) : defaults(); state.profile = keepProfile; state.settings = { ...state.settings, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
         viewOnly = false; save(); render(); $('#tName').focus();
       }
     }
@@ -1015,7 +1268,7 @@ function bind() {
       const data = JSON.parse(await f.text());
       if (!data || !Array.isArray(data.teams)) throw new Error('bad');
       if (!(await ask('Restore this backup?', `“${data.name || 'Untitled'}” will replace the tournament saved in this browser.`, 'Restore'))) return;
-      state = normalize(data); viewOnly = false; save(); render(); toast('Backup restored.');
+      state = normalize(data); enforceProfile(); viewOnly = false; save(); render(); toast('Backup restored.');
     } catch (er) { toast('That file is not a Tournament Manager backup.'); }
   });
 
@@ -1026,12 +1279,12 @@ function bind() {
     if (k === 'install') openInstall();
     if (k === 'nohint') { store.set('tm-install-hint', '1'); render(); }
     if (k === 'dismiss') { state.demo = false; save(); render(); }
-    if (k === 'fresh') { const s = defaults(); state = s; save(); render(); $('#tName').focus(); }
+    if (k === 'fresh') { const s = lockedProfile() ? freshFor(lockedProfile()) : defaults(); state = s; save(); render(); $('#tName').focus(); }
     if (k === 'keep') {
-      if (store.get(KEY) && !(await ask('Replace your tournament?', 'Saving this snapshot replaces the tournament stored in this browser.', 'Replace'))) return;
+      if (store.get(userKey()) && !(await ask('Replace your tournament?', 'Saving this snapshot replaces the tournament stored in this browser.', 'Replace'))) return;
       viewOnly = false; history.replaceState(null, '', location.pathname); save(); render(); toast('Saved to this browser.');
     }
-    if (k === 'leave') { viewOnly = false; history.replaceState(null, '', location.pathname); load(); render(); }
+    if (k === 'leave') { viewOnly = false; history.replaceState(null, '', location.pathname); if (user) startSession(); else showLogin(); }
   });
 
   // share sheet
@@ -1049,7 +1302,7 @@ function bind() {
   });
   $('#stopLive').addEventListener('click', async () => {
     if (!(await ask('Stop live updates?', 'Anyone who has the link will keep seeing the tournament as it is now, but new scores won\'t show up. You can turn on a new live link later.', 'Stop live updates', true))) return;
-    state.live = null; store.set(KEY, JSON.stringify(state)); render(); renderShare();
+    state.live = null; persist(); render(); renderShare();
   });
   $('#shareUrl').addEventListener('focus', e => { if (shareLink) e.target.setSelectionRange(0, shareLink.length); });
   $('#shareCopy').addEventListener('click', () => { if (shareLink) copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
@@ -1059,8 +1312,20 @@ function bind() {
     navigator.share({ title: name, text: state.live && shareLink.includes('#live=') ? `${name}: live scores, standings and bracket` : `${name}: schedule, standings and bracket`, url: shareLink })
       .catch(er => { if (er && er.name !== 'AbortError') copyText(shareLink, 'Link copied. Paste it into your team chat.'); });
   });
-  window.addEventListener('beforeprint', renderPrint);
+  window.addEventListener('beforeprint', () => renderPrint());
   window.addEventListener('online', () => { if (state.live) pushLive(); if (liveView) pollLive(); });
+
+  // print / save sheet
+  const ex = $('#exportSheet');
+  const closeEx = () => { ex.hidden = true; };
+  $('#exClose').addEventListener('click', closeEx);
+  ex.addEventListener('click', e => { if (e.target === ex) closeEx(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !ex.hidden) closeEx(); });
+  ex.addEventListener('change', e => { if (e.target.name === 'exSel') { ui.printSel = e.target.value; $('#exResult').hidden = true; } });
+  $('#exPrint').addEventListener('click', () => { ui.printSel = exportSel(); renderPrint(ui.printSel); closeEx(); window.print(); });
+  $('#exPdf').addEventListener('click', () => runExport('pdf'));
+  $('#exImg').addEventListener('click', () => runExport('image'));
+  $('#exSave').addEventListener('click', saveExport);
 
   // install sheet
   const sheet = $('#installSheet');
@@ -1082,6 +1347,7 @@ function bind() {
     $(sel).addEventListener('input', () => { readSettingsFromForm(); if (state.demo) state.demo = false; save(); renderMast(); renderSetupDerived(); });
   });
   $('#tProfile').addEventListener('change', async e => {
+    if (lockedProfile()) { e.target.value = state.profile; return; }
     const key = e.target.value, P = PROFILES[key] || PROFILES.standard;
     state.profile = key; state.demo = false;
     if (P.event) {
@@ -1187,8 +1453,43 @@ function deferRender() {
 }
 
 /* ============================ Boot ============================ */
+async function sha256hex(text) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(d), b => b.toString(16).padStart(2, '0')).join('');
+}
+function showLogin() {
+  const ls = $('#loginScreen'); ls.hidden = false;
+  document.body.classList.add('locked');
+  setTimeout(() => $('#loginUser').focus(), 50);
+}
+function startSession() {
+  $('#loginScreen').hidden = true; document.body.classList.remove('locked');
+  load(); render();
+  if (state.live) { sync.status = 'pending'; renderLiveChip(); pushLive(); }
+}
+function bindLogin() {
+  $('#loginForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const u = $('#loginUser').value.trim().toLowerCase(), pw = $('#loginPass').value;
+    const acct = ACCOUNTS[u];
+    let ok = false;
+    try { ok = !!acct && (await sha256hex(`${u}:${pw}`)) === acct.hash; } catch (er) { ok = false; }
+    if (!ok) { $('#loginErr').textContent = 'That username and password don\'t match. Try again.'; $('#loginPass').select(); return; }
+    $('#loginErr').textContent = ''; $('#loginPass').value = '';
+    user = u; store.set(SESSION_KEY, u);
+    startSession();
+    toast(`Signed in as ${acct.name}.`);
+  });
+}
+function signOut() {
+  clearTimeout(sync.timer);
+  store.del(SESSION_KEY); user = null;
+  location.replace(location.pathname);
+}
 async function boot() {
-  load();
+  const saved = store.get(SESSION_KEY);
+  user = saved && ACCOUNTS[saved] ? saved : null;
+  bindLogin();
   const lv = location.hash.match(/^#live=([a-z0-9]{8})$/);
   if (lv) {
     viewOnly = true; liveView = { id: lv[1], updated: 0, error: '' };
@@ -1202,13 +1503,13 @@ async function boot() {
   }
   const m = location.hash.match(/^#view=(.+)$/);
   if (m) {
-    try { state = normalize(await unpackState(m[1])); viewOnly = true; }
-    catch (e) { toast('That shared link could not be opened.'); }
+    try { state = normalize(await unpackState(m[1])); viewOnly = true; bind(); render(); registerSW(); return; }
+    catch (e) { toast('That shared link could not be opened.'); history.replaceState(null, '', location.pathname); }
   }
   bind();
-  render();
   registerSW();
-  if (state.live) { sync.status = 'pending'; renderLiveChip(); pushLive(); }
+  if (!user) { showLogin(); return; }
+  startSession();
 }
 function registerSW() {
   if ('serviceWorker' in navigator && !EMBEDDED && (location.protocol === 'https:' || location.hostname === 'localhost')) {
