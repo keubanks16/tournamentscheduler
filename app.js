@@ -16,6 +16,27 @@ const LIVE_API = location.hostname === 'localhost' ? 'http://localhost:8787' : '
 let liveView = null;   // { id, updated, error } when following someone else's live link
 const REDUCED = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const SAMPLE = ['GS Baseball', 'Dirtdogs', 'Bandits', 'Titans', 'Warriors', 'Braves', 'Bulldogs', 'Raptors'];
+const RIBBON = '<svg class="ribbon" viewBox="0 0 24 32" aria-hidden="true"><path fill="currentColor" d="M12 1.5c-3.3 0-5.6 2.4-5.6 5.6 0 2.2 1.1 4.6 2.9 7.5L2.6 26.2l3.6 2.6 5.8-9.6 5.8 9.6 3.6-2.6-6.7-11.6c1.8-2.9 2.9-5.3 2.9-7.5 0-3.2-2.3-5.6-5.6-5.6Zm0 3.4c1.3 0 2.2 1 2.2 2.3 0 1.3-.8 3-2.2 5.3-1.4-2.3-2.2-4-2.2-5.3 0-1.3.9-2.3 2.2-2.3Z"/></svg>';
+const PROFILES = {
+  standard: { label: 'Standard' },
+  butler: {
+    label: 'Butler Fire Department',
+    presenter: 'Presented by Butler Fire Department',
+    logo: 'icons/butler-fd.png',
+    logoAlt: 'Butler Fire Department badge',
+    tagline: 'Together we fight',
+    cause: 'Raise awareness. Support survivors. Find a cure.',
+    thanks: 'Thank you for supporting the fight against breast cancer.',
+    themeColor: '#050506',
+    event: {
+      name: 'Breast Cancer Awareness One Pitch Softball',
+      date: '2026-10-24',
+      location: 'Taylor County Rec Department, 183 Charing Road, Butler, GA 31006'
+    },
+    details: ['Co-ed teams · All skill levels welcome', '$200 per team · Proceeds support breast cancer research & support', 'Info: Luke Arnold · lmarnold@gmail.com']
+  }
+};
+const profileOf = () => PROFILES[state.profile] || PROFILES.standard;
 const TIE = { pct: ['Win %', 'PCT'], h2h: ['Head-to-head', 'H2H'], rd: ['Run differential', 'RD'], ra: ['Fewest runs allowed', 'RA'], rf: ['Most runs scored', 'RF'] };
 
 const store = {
@@ -27,7 +48,7 @@ const store = {
 /* ============================ State ============================ */
 function defaults() {
   return {
-    v: 5, name: '', date: '', teams: [], order: [], short: [],
+    v: 5, profile: 'standard', name: '', date: '', location: '', teams: [], order: [], short: [],
     settings: { gamesPerTeam: 3, fields: ['Field 1', 'Field 2'], startTime: '08:00', slotMinutes: 90, bracketFormat: 'single', advance: 0, runCap: 0, ties: ['pct', 'h2h', 'rd', 'ra', 'rf'] },
     games: [], bracket: null, tab: 'setup', demo: false
   };
@@ -416,10 +437,30 @@ function render() {
   if (t === 'standings') renderStandings();
   if (t === 'bracket') renderBracket();
 }
+function applyProfile() {
+  const P = profileOf(), root = document.documentElement;
+  if (state.profile && state.profile !== 'standard') root.dataset.profile = state.profile; else delete root.dataset.profile;
+  const logo = $('#mastLogo');
+  if (P.logo) { if (logo.getAttribute('src') !== P.logo) logo.src = P.logo; logo.alt = P.logoAlt || ''; logo.hidden = false; } else logo.hidden = true;
+  const tag = $('#mastTag');
+  tag.hidden = !P.tagline; if (P.tagline) tag.innerHTML = `${RIBBON}<span>${esc(P.tagline)}</span>`;
+  const strip = $('#eventStrip');
+  const bits = [];
+  if (P.cause) bits.push(`<span class="ev-cause">${RIBBON}${esc(P.cause)}</span>`);
+  if (state.location) bits.push(`<span class="ev-item">${esc(state.location)}</span>`);
+  (P.details || []).forEach(d => bits.push(`<span class="ev-item ev-extra">${esc(d)}</span>`));
+  strip.innerHTML = `<div class="ev-inner">${bits.join('')}</div>`;
+  strip.hidden = !P.cause && !state.location;
+  const fc = $('#footCause'); fc.hidden = !P.thanks; fc.textContent = P.thanks || '';
+  const tc = document.querySelector('meta[name="theme-color"]'); if (tc) tc.setAttribute('content', P.themeColor || '#0a2342');
+}
 function renderMast() {
+  applyProfile();
   $('#mastName').textContent = state.name || 'Tournament Manager';
+  $('#mastName').classList.toggle('long', (state.name || '').length > 22);
   document.title = state.name ? `${state.name} · Tournament Manager` : 'Tournament Manager';
   const bits = [];
+  if (profileOf().presenter) bits.push(profileOf().presenter);
   if (state.date) bits.push(fmtDate(state.date));
   if (state.order.length) bits.push(`${state.order.length} teams`);
   bits.push(`${state.settings.fields.length} field${state.settings.fields.length > 1 ? 's' : ''}`);
@@ -505,6 +546,9 @@ function renderSetup() {
   const S = state.settings;
   if (document.activeElement !== $('#tName')) $('#tName').value = state.name;
   $('#tDate').value = state.date || '';
+  $('#tProfile').value = PROFILES[state.profile] ? state.profile : 'standard';
+  if (document.activeElement !== $('#tLocation')) $('#tLocation').value = state.location || '';
+  $('#profileNote').textContent = profileOf().presenter ? `${profileOf().label} colors, badge and event details are applied everywhere, including live links.` : '';
   if (document.activeElement !== $('#teamsInput')) $('#teamsInput').value = state.teams.join('\n');
   $('#gamesPerTeam').value = String(S.gamesPerTeam);
   $('#startTime').value = S.startTime;
@@ -674,7 +718,7 @@ function renderBracket() {
   if (seedsChanged() && !viewOnly) html += `<div class="banner warn"><p>Pool results changed after the bracket was built, so the seeds no longer match the standings.</p><div class="actions"><button class="btn btn-sm" id="reseedBtn">Rebuild with new seeds</button></div></div>`;
   html += `<div class="card"><div class="card-head"><h2 class="h-card">Championship bracket</h2><div class="actions"><span class="pill">${B.format === 'double' ? 'Double' : 'Single'} elimination · ${br.seeds.length} teams</span>${viewOnly ? '' : `<label class="switch"><input type="checkbox" id="editToggle2" ${ui.edit ? 'checked' : ''}><span>Edit times</span></label><button class="btn btn-sm" id="rebuildBtn">Rebuild</button>`}</div></div>
     <p class="note" style="margin:0 0 6px">Enter the final score in each game. The winner moves on automatically.${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
-  if (B.champion) html += `<div class="champ" style="margin:12px 0">${trophy()}<p class="eyebrow">${esc(state.name || 'Tournament')} champion</p><strong>${esc(B.champion.team)}</strong><span class="note" style="margin:0">#${B.champion.seed} seed</span></div>`;
+  if (B.champion) html += `<div class="champ" style="margin:12px 0">${profileOf().cause ? RIBBON : trophy()}<p class="eyebrow">${esc(state.name || 'Tournament')} champion</p><strong>${esc(B.champion.team)}</strong><span class="note" style="margin:0">#${B.champion.seed} seed</span></div>`;
 
   if (B.format === 'single') {
     html += `<div class="bracket-scroll"><div class="bk">` + B.rounds.map((round) => `<div class="bk-col"><h3>${esc(round[0].label)}</h3><div class="bk-slots">${round.map(m => `<div class="bk-slot">${m.bye ? `<div class="match is-bye"><div class="m-meta"><span>Bye</span></div><div class="m-row"><span class="tm"><span class="seed">#${m.winner.seed}</span><span>${esc(m.winner.team)}</span></span></div></div>` : bracketMatch(m)}</div>`).join('')}</div></div>`).join('') + `</div></div>`;
@@ -828,7 +872,11 @@ async function unpackState(s) {
 }
 function scheduleText() {
   const { items, B } = allItems();
-  const lines = [`${state.name || 'Tournament'}${state.date ? ' — ' + fmtDate(state.date) : ''}`, ''];
+  const P = profileOf();
+  const lines = [`${state.name || 'Tournament'}${state.date ? ' — ' + fmtDate(state.date) : ''}`];
+  if (P.presenter) lines.push(P.presenter);
+  if (state.location) lines.push(state.location);
+  lines.push('');
   let lastT = null;
   items.forEach(i => {
     if (i.t !== lastT) { lines.push(fmt(i.t)); lastT = i.t; }
@@ -839,6 +887,7 @@ function scheduleText() {
   lines.push('', 'Standings');
   rankTeams().forEach((r, i) => lines.push(`  ${i + 1}. ${r.team} ${r.w}-${r.l}${r.t ? '-' + r.t : ''} (RD ${r.rd > 0 ? '+' : ''}${r.rd})`));
   if (B && B.champion) lines.push('', `Champion: ${B.champion.team}`);
+  if (P.cause) lines.push('', P.cause);
   return lines.join('\n');
 }
 function legacyCopy(text) {
@@ -869,6 +918,7 @@ function readSettingsFromForm() {
   const S = state.settings;
   state.name = $('#tName').value.trim();
   state.date = $('#tDate').value;
+  state.location = $('#tLocation').value.trim();
   S.gamesPerTeam = +$('#gamesPerTeam').value;
   S.startTime = $('#startTime').value || '08:00';
   S.slotMinutes = Math.min(300, Math.max(15, +$('#slotMinutes').value || 90));
@@ -907,7 +957,7 @@ function bind() {
     if (act === 'share') openShare();
     if (act === 'new') {
       if (await ask('Start a new tournament?', 'This clears every team, game and score saved in this browser. Download a backup first if you want to keep it.', 'Clear everything', true)) {
-        const keep = state.settings; state = defaults(); state.settings = { ...state.settings, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
+        const keep = state.settings, keepProfile = state.profile; state = defaults(); state.profile = keepProfile; state.settings = { ...state.settings, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
         viewOnly = false; save(); render(); $('#tName').focus();
       }
     }
@@ -980,8 +1030,19 @@ function bind() {
   window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Find Tournament on your home screen.'); });
 
   // setup inputs
-  ['#tName', '#tDate', '#gamesPerTeam', '#startTime', '#slotMinutes', '#runCap', '#bracketFormat', '#advance'].forEach(sel => {
+  ['#tName', '#tDate', '#tLocation', '#gamesPerTeam', '#startTime', '#slotMinutes', '#runCap', '#bracketFormat', '#advance'].forEach(sel => {
     $(sel).addEventListener('input', () => { readSettingsFromForm(); if (state.demo) state.demo = false; save(); renderMast(); renderSetupDerived(); });
+  });
+  $('#tProfile').addEventListener('change', async e => {
+    const key = e.target.value, P = PROFILES[key] || PROFILES.standard;
+    state.profile = key; state.demo = false;
+    if (P.event) {
+      const ev = P.event, differs = (state.name && state.name !== ev.name) || (state.date && state.date !== ev.date);
+      if (!differs || await ask(`Use the ${P.label} event details?`, `Sets the name to “${ev.name}”, the date to ${fmtDate(ev.date)} and the location to ${ev.location}.`, 'Use event details')) {
+        state.name = ev.name; state.date = ev.date; state.location = ev.location;
+      }
+    }
+    save(); render(); toast(`${P.label} profile applied.`);
   });
   $('#teamsInput').addEventListener('input', () => { readSettingsFromForm(); save(); renderSetupDerived(); renderMast(); });
   $('#sampleBtn').addEventListener('click', () => { $('#teamsInput').value = SAMPLE.join('\n'); readSettingsFromForm(); save(); renderSetupDerived(); });

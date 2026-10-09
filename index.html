@@ -15,15 +15,19 @@
 <meta name="apple-mobile-web-app-title" content="Tournament">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&family=Permanent+Marker&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="mast">
   <div class="mast-inner">
-    <div class="mast-title">
-      <p class="eyebrow" id="mastMeta">Tournament</p>
-      <h1 id="mastName">Tournament Manager</h1>
+    <div class="mast-brand">
+      <img id="mastLogo" class="mast-logo" src="" alt="" hidden>
+      <div class="mast-title">
+        <p class="eyebrow" id="mastMeta">Tournament</p>
+        <h1 id="mastName">Tournament Manager</h1>
+        <p class="mast-tag" id="mastTag" hidden></p>
+      </div>
     </div>
     <div class="mast-side">
       <div class="prog" id="prog" hidden>
@@ -49,6 +53,7 @@
       </div>
     </div>
   </div>
+  <div class="event-strip" id="eventStrip" hidden></div>
   <div class="stitch" aria-hidden="true"></div>
 </header>
 
@@ -70,9 +75,17 @@
       <div class="col">
         <div class="card">
           <h2 class="h-card">Tournament</h2>
-          <div class="fields2">
+          <label class="fld fld-profile">Tournament profile
+            <select id="tProfile">
+              <option value="standard">Standard</option>
+              <option value="butler">Butler Fire Department</option>
+            </select>
+          </label>
+          <p class="note" id="profileNote"></p>
+          <div class="fields2" style="margin-top:12px">
             <label class="fld">Name<input id="tName" placeholder="Fall Classic" autocomplete="off"></label>
             <label class="fld">Date<input id="tDate" type="date"></label>
+            <label class="fld fld-wide">Location<input id="tLocation" placeholder="Field or park name, address" autocomplete="off"></label>
           </div>
         </div>
 
@@ -194,7 +207,7 @@
   </section>
 </div>
 
-<footer class="foot">Saves automatically in this browser. Use Menu → Download backup to move it to another device.</footer>
+<footer class="foot"><span id="footCause" class="foot-cause" hidden></span>Saves automatically in this browser. Use Menu → Download backup to move it to another device.</footer>
 
 <!-- Draw overlay -->
 <div id="drawOverlay" class="overlay" hidden>

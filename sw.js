@@ -1,8 +1,8 @@
 /* Offline support: the app works at the field even with no signal.
    App files are fetched fresh when online and served from the cache when offline. */
-const CACHE = 'tm-v10';
+const CACHE = 'tm-v12';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
-  'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/favicon.png'];
+  'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/favicon.png', 'icons/butler-fd.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -317,3 +317,56 @@ a.btn{text-decoration:none}
 .actions .spacer{flex:1}
 .banner.live{background:var(--win-soft);border-color:var(--win)}
 .banner.live .live-dot{margin-right:6px}
+
+/* ---------- Tournament profiles ---------- */
+.mast-brand{display:flex;align-items:center;gap:16px;min-width:0;flex:1 1 320px}
+.mast-brand .mast-title{flex:1 1 auto}
+.mast-logo{width:clamp(64px,11vw,108px);height:auto;flex:0 0 auto;filter:drop-shadow(0 4px 14px rgba(0,0,0,.5))}
+.mast-tag{margin:8px 0 0;display:flex;align-items:center;gap:8px;font:400 clamp(17px,2.4vw,22px)/1.1 "Permanent Marker","Barlow Condensed",cursive;color:var(--sky);letter-spacing:.02em}
+.ribbon{width:.8em;height:1.1em;flex:0 0 auto;color:var(--sky)}
+.event-strip{border-top:1px solid rgba(255,255,255,.12)}
+.ev-inner{max-width:1180px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;font:600 13px/1.35 var(--f-label);letter-spacing:.06em;text-transform:uppercase;color:var(--on-navy-muted)}
+.ev-cause{display:inline-flex;align-items:center;gap:6px;color:var(--on-navy);font-weight:700}
+.ev-item{position:relative;min-width:0;overflow-wrap:anywhere}
+.fld-wide{grid-column:1/-1}
+.foot-cause{display:block;font:600 13px/1.4 var(--f-label);letter-spacing:.14em;text-transform:uppercase;color:var(--sky);margin-bottom:6px}
+.champ .ribbon{width:30px;height:42px;color:var(--gold)}
+
+/* Butler Fire Department: black and pink, from the event flyer. One look in both light and dark. */
+:root[data-profile="butler"]{
+  --bg:#09090b; --surface:#131216; --surface-2:#1a191e; --sunk:#0e0d11;
+  --ink:#f6f2f5; --muted:#ada4ad; --line:#2d2a31; --line-2:#211f25;
+  --navy:#050506; --navy-2:#24121c; --on-navy:#ffffff; --on-navy-muted:#cfc5cd;
+  --sky:#ff4fa3; --sky-soft:#3a0f26; --stitch:#ff4fa3;
+  --win:#4cc98a; --win-soft:#0f2b1d; --warn:#f2b453; --warn-soft:#30240d;
+  --loss:#ff7a6c; --loss-soft:#381513; --gold:#ff6fb5; --gold-soft:#2a0d1c;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 22px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+:root[data-profile="butler"] .mast{background:
+  radial-gradient(60% 120% at 100% 0%,rgba(255,79,163,.22),transparent 60%),
+  radial-gradient(40% 90% at 0% 100%,rgba(255,79,163,.12),transparent 70%),#050506}
+:root[data-profile="butler"] .mast h1{color:#fff;text-shadow:0 2px 0 rgba(255,79,163,.35)}
+:root[data-profile="butler"] .mast .eyebrow{color:var(--sky)}
+:root[data-profile="butler"] .prog-bar i{background:var(--sky)}
+:root[data-profile="butler"] .stitch{background:#050506}
+:root[data-profile="butler"] .btn-primary{background:var(--sky);border-color:var(--sky);color:#14040c}
+:root[data-profile="butler"] .btn-primary:hover{background:#ff6fb5;border-color:#ff6fb5}
+:root[data-profile="butler"] .team-card{background:linear-gradient(120deg,#24121c,#050506)}
+:root[data-profile="butler"] .tag.next{background:var(--sky);color:#14040c}
+:root[data-profile="butler"] .game.is-bracket{border-left-color:var(--sky)}
+:root[data-profile="butler"] .champ{background:radial-gradient(80% 120% at 50% 0%,rgba(255,79,163,.25),transparent 70%),var(--surface);border-color:var(--sky)}
+:root[data-profile="butler"] .champ .eyebrow{color:var(--sky)}
+:root[data-profile="butler"] .event-strip{background:linear-gradient(90deg,rgba(255,79,163,.18),rgba(255,79,163,.04))}
+@media (max-width:520px){
+  .mast-brand{gap:12px}
+  .ev-inner{font-size:12px;gap:4px 12px}
+}
+@media print{.mast-logo{filter:none}}
+.mast h1.long{font-size:clamp(28px,4.6vw,46px);line-height:.95}
+@media (max-width:520px){
+  .mast h1.long{font-size:30px}
+  .mast-logo{width:58px;align-self:flex-start;margin-top:4px}
+  .mast .eyebrow{font-size:12px}
+  .ev-extra{display:none}
+}
