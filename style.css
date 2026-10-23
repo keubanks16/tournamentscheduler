@@ -435,3 +435,17 @@ body.locked{overflow:hidden}
 .ex-result img{width:92px;max-height:120px;object-fit:contain;object-position:top;border:1px solid var(--line);border-radius:6px;background:#fff;flex:0 0 auto}
 .ex-result .note{margin:0 0 8px}
 @media print{ #printView.pv-pool .pv-bracket-sec, #printView.pv-pool .pv-champ{display:none} #printView.pv-bracket .pv-sched-sec, #printView.pv-bracket .pv-stand-sec{display:none} }
+
+/* Bracket-only: first-round game editor */
+.op-list{display:flex;flex-direction:column;gap:10px;margin:14px 0 12px}
+.op-row{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);padding:10px;display:flex;flex-direction:column;gap:8px}
+.op-top{display:flex;gap:8px;align-items:center}
+.op-top .gno{font:700 15px/1 var(--f-label);letter-spacing:.04em;min-width:30px}
+.op-top input,.op-top select{width:auto;min-height:38px;padding:6px 8px}
+.op-top input{flex:0 1 8.5em;min-width:0}
+.op-top select{flex:1 1 7em;min-width:6.5em}
+.op-teams{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center}
+.op-teams .vs{font:600 13px/1 var(--f-label);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.op-row.bad{border-color:var(--warn)}
+#opNote.warn{color:var(--warn)}
+@media (max-width:520px){.op-teams{grid-template-columns:minmax(0,1fr)}.op-teams .vs{text-align:center}}

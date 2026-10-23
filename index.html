@@ -107,7 +107,13 @@
         <div class="card">
           <h2 class="h-card">Format</h2>
           <div class="fields2">
-            <label class="fld">Pool games per team
+            <label class="fld fld-wide">Tournament type
+              <select id="tMode">
+                <option value="pool">Pool play, then bracket</option>
+                <option value="bracket">Double elimination bracket only</option>
+              </select>
+            </label>
+            <label class="fld pool-only">Pool games per team
               <select id="gamesPerTeam">
                 <option value="1">1</option><option value="2">2</option><option value="3">3</option>
                 <option value="4">4</option><option value="5">5</option><option value="6">6</option>
@@ -116,19 +122,19 @@
             </label>
             <label class="fld">First pitch<input id="startTime" type="time"></label>
             <label class="fld">Time per game (min)<input id="slotMinutes" type="number" min="15" max="300" step="5" inputmode="numeric"></label>
-            <label class="fld">Run differential cap
+            <label class="fld pool-only">Run differential cap
               <select id="runCap">
                 <option value="0">No cap</option><option value="5">5 per game</option><option value="6">6 per game</option>
                 <option value="7">7 per game</option><option value="8">8 per game</option><option value="10">10 per game</option>
               </select>
             </label>
-            <label class="fld">Bracket format
+            <label class="fld pool-only">Bracket format
               <select id="bracketFormat">
                 <option value="single">Single elimination</option>
                 <option value="double">Double elimination</option>
               </select>
             </label>
-            <label class="fld">Teams advancing<select id="advance"></select></label>
+            <label class="fld pool-only">Teams advancing<select id="advance"></select></label>
           </div>
 
           <div class="fieldset">
@@ -142,6 +148,17 @@
             </div>
             <div id="fieldNames" class="field-names"></div>
           </div>
+        </div>
+
+        <div class="card" id="openingCard" hidden>
+          <div class="card-head">
+            <h2 class="h-card">First-round games</h2>
+            <button class="btn btn-sm" id="opAuto" type="button">Fill from team list</button>
+          </div>
+          <p class="note" style="margin:0">Pick the two teams in each game. For a first-round bye, pick “Winner of G1” (or any earlier game) as the opponent. A team left out of every game gets a bye to round 2. After the first round, the app pairs the rest of the bracket by itself, and a team is out after its second loss.</p>
+          <div id="opList" class="op-list"></div>
+          <button class="btn btn-sm" id="opAdd" type="button">+ Add game</button>
+          <p class="note" id="opNote" aria-live="polite"></p>
         </div>
 
         <div class="card card-action">

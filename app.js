@@ -60,8 +60,8 @@ const store = {
 function defaults() {
   return {
     v: 5, profile: 'standard', name: '', date: '', location: '', teams: [], order: [], short: [],
-    settings: { gamesPerTeam: 3, fields: ['Field 1', 'Field 2'], startTime: '08:00', slotMinutes: 90, bracketFormat: 'single', advance: 0, runCap: 0, ties: ['pct', 'h2h', 'rd', 'ra', 'rf'] },
-    games: [], bracket: null, tab: 'setup', demo: false
+    settings: { mode: 'pool', gamesPerTeam: 3, fields: ['Field 1', 'Field 2'], startTime: '08:00', slotMinutes: 90, bracketFormat: 'single', advance: 0, runCap: 0, ties: ['pct', 'h2h', 'rd', 'ra', 'rf'] },
+    games: [], opening: [], bracket: null, tab: 'setup', demo: false
   };
 }
 let state = defaults();
@@ -79,6 +79,8 @@ function normalize(s) {
   o.teams = Array.isArray(o.teams) ? o.teams : [];
   o.order = Array.isArray(o.order) ? o.order : [];
   o.short = Array.isArray(o.short) ? o.short : [];
+  if (o.settings.mode !== 'bracket') o.settings.mode = 'pool';
+  o.opening = (Array.isArray(o.opening) ? o.opening : []).filter(x => x && x.id).map(x => ({ id: x.id, time: x.time || o.settings.startTime, field: Math.min(o.settings.fields.length - 1, Math.max(0, +x.field || 0)), a: x.a || '', b: x.b || '' }));
   if (o.live && !(o.live.id && o.live.key)) o.live = null;
   if (o.bracket) { o.bracket = { results: {}, overrides: {}, delay: 0, ...o.bracket }; if (!o.bracket.count) o.bracket.count = (o.bracket.seeds || []).length; }
   return o;
@@ -126,6 +128,7 @@ const fmt = t => { const m = toMin(t); const h = Math.floor(m / 60) % 24, mm = (
 const fmtDate = d => { if (!d) return ''; const [y, mo, da] = d.split('-').map(Number); if (!y) return ''; return new Date(y, mo - 1, da).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); };
 const pctStr = p => p >= 1 ? '1.000' : '.' + String(Math.round(p * 1000)).padStart(3, '0');
 const fieldName = i => state.settings.fields[i] || `Field ${i + 1}`;
+const bracketOnly = () => state.settings.mode === 'bracket';
 const isFinal = g => g.sa !== '' && g.sb !== '' && g.sa != null && g.sb != null;
 
 /* ============================ Helpers ============================ */
@@ -293,6 +296,7 @@ function poolDone() { return state.games.length > 0 && state.games.every(isFinal
 /* Seeds stay "#1 TBD" until every pool game is final, then fill from the standings.
    They lock once the first bracket score goes in. */
 function bracketSeeds(br) {
+  if (br.only) return state.order;
   if (br.seeds) return br.seeds;
   if (poolDone()) return projectedSeeds().slice(0, br.count);
   return Array(br.count).fill(null);
@@ -335,14 +339,55 @@ function resolveSingle(br) {
   const fin = rounds[rounds.length - 1][0];
   return { format: 'single', rounds, games: rounds.flat().filter(m => !m.bye), champion: fin && fin.winner ? fin.winner : null };
 }
+/* Bracket-only tournaments: the organizer sets the first-round games by hand. Each side is
+   'T|team', 'W|gameId' (winner of an earlier game) or 'L|gameId' (loser of an earlier game). */
+function openingSorted() {
+  return (state.opening || []).map((o, i) => ({ o, i })).sort((x, y) => toMin(x.o.time) - toMin(y.o.time) || x.o.field - y.o.field || x.i - y.i).map(x => x.o);
+}
+function resolveOpening(br, ctx) {
+  const { seeds, ent, losses, played, byeCount } = ctx, list = openingSorted(), len = state.settings.slotMinutes;
+  const info = {}, games = [], appear = {};
+  list.forEach((o, k) => { info[o.id] = { num: ctx.num + k }; });
+  const side = ref => {
+    if (!ref) return { s: null, label: 'Pick a team' };
+    const kind = ref[0], v = ref.slice(2);
+    if (kind === 'T') return seeds.includes(v) ? { s: ent(v) } : { s: null, label: 'TBD' };
+    const src = info[v]; if (!src) return { s: null, label: 'TBD' };
+    const label = `${kind === 'W' ? 'Winner' : 'Loser'} of G${src.num}`;
+    const g = src.game; const team = g ? (kind === 'W' ? g.winner : g.loser) : null;
+    return { s: team || null, label, loser: kind === 'L' };
+  };
+  list.forEach((o, k) => {
+    const A = side(o.a), Bs = side(o.b), key = 'O:' + o.id, group = A.loser || Bs.loser ? 'e' : 'w';
+    const g = { key, r: 0, a: A.s, b: Bs.s, aLabel: A.label || '', bLabel: Bs.label || '', label: group === 'e' ? 'Elimination side' : 'First round', group, num: ctx.num + k, opening: true };
+    const res = resultFor(br, key, g.a, g.b);
+    finishMatch(g, res);
+    const tf = timeFor(br, key, toMin(o.time), res, o.field);
+    g.time = tf.time; g.field = tf.field;
+    if (g.winner) { losses[g.loser.team]++; played.add(pairKey(g.a.team, g.b.team)); }
+    info[o.id].game = g; games.push(g);
+    [o.a, o.b].forEach(ref => { if (ref && ref[0] === 'T') appear[ref.slice(2)] = true; });
+    // a team that waits for the winner of an earlier game had a first-round bye
+    if (o.a && o.b) [[o.a, o.b], [o.b, o.a]].forEach(([x, y]) => { if (x[0] === 'T' && y[0] === 'W') byeCount[x.slice(2)] = 1; });
+  });
+  const byes = seeds.filter(t => !appear[t]).map(t => { byeCount[t] = 1; return { ...ent(t), group: 'w' }; });
+  const end = list.length ? Math.max(...list.map(o => toMin(o.time))) + len : toMin(state.settings.startTime);
+  ctx.num += list.length;
+  return { round: { title: 'First round', games, byes, nextTime: end + (br.delay || 0) }, pending: games.some(g => !g.winner), cursor: end };
+}
 function resolveDouble(br) {
   const F = state.settings.fields.length, len = state.settings.slotMinutes;
   const PH = '\u0001seed';
   const seeds = bracketSeeds(br).map((t, i) => t || PH + (i + 1)), seedOf = t => seeds.indexOf(t) + 1;
-  const ent = t => ({ team: t.startsWith(PH) ? null : t, seed: seedOf(t) });
+  const ent = t => ({ team: t.startsWith(PH) ? null : t, seed: br.only ? 0 : seedOf(t) });
   const losses = Object.fromEntries(seeds.map(t => [t, 0])), byeCount = {}, played = new Set();
-  const rounds = []; let cursor = bracketStart(), num = state.games.length + 1, champion = null, finalStarted = false;
-  for (let r = 0; r < 80; r++) {
+  const rounds = []; let cursor = bracketStart(), num = state.games.length + 1, champion = null, finalStarted = false, stop = false;
+  if (br.only && state.opening.length) {
+    const ctx = { seeds, ent, losses, played, byeCount, num };
+    const op = resolveOpening(br, ctx);
+    rounds.push(op.round); num = ctx.num; cursor = op.cursor; stop = op.pending;
+  }
+  for (let r = 0; r < 80 && !stop; r++) {
     const alive = seeds.filter(t => losses[t] < 2);
     if (alive.length <= 1) { champion = alive[0] && !alive[0].startsWith(PH) ? ent(alive[0]) : null; break; }
     const zero = alive.filter(t => losses[t] === 0), one = alive.filter(t => losses[t] === 1);
@@ -379,17 +424,18 @@ function resolveDouble(br) {
       if (g.winner) { losses[g.loser.team]++; played.add(pairKey(g.a.team, g.b.team)); }
     });
     cursor += Math.max(1, Math.ceil(games.length / F)) * len;
-    rounds.push({ games, byes, nextTime: cursor + (br.delay || 0) });
+    rounds.push({ title: `Round ${rounds.length + 1}`, games, byes, nextTime: cursor + (br.delay || 0) });
     if (games.some(g => !g.winner)) break;
   }
   return { format: 'double', rounds, games: rounds.flatMap(x => x.games), champion, losses, seeds: seeds.map(ent) };
 }
 function resolveBracket() { const br = state.bracket; if (!br) return null; return br.format === 'double' ? resolveDouble(br) : resolveSingle(br); }
 function buildBracket() {
+  if (bracketOnly()) { state.bracket = { format: 'double', only: true, seeds: null, count: state.order.length, results: {}, overrides: {}, delay: 0 }; return; }
   state.bracket = { format: state.settings.bracketFormat, seeds: null, count: advancingCount(), results: {}, overrides: {}, delay: 0 };
 }
 function bracketHasScores() { const br = state.bracket; return !!br && Object.values(br.results).some(r => r.sa !== '' || r.sb !== ''); }
-function seedsChanged() { const br = state.bracket; if (!br || !br.seeds) return false; const p = projectedSeeds().slice(0, br.count); return p.length !== br.seeds.length || p.some((t, i) => t !== br.seeds[i]); }
+function seedsChanged() { const br = state.bracket; if (!br || br.only || !br.seeds) return false; const p = projectedSeeds().slice(0, br.count); return p.length !== br.seeds.length || p.some((t, i) => t !== br.seeds[i]); }
 
 /* ============================ Scores ============================ */
 function cleanScore(v) { v = String(v).replace(/\D/g, '').slice(0, 3); return v; }
@@ -416,7 +462,13 @@ function setTimeField(kind, id, what, v) {
     const g = state.games.find(x => x.id === id); if (!g) return;
     if (what === 'time') g.time = v || g.time; else g.field = +v;
   } else {
-    const br = state.bracket, ov = br.overrides[id] = br.overrides[id] || {};
+    const br = state.bracket;
+    if (id.startsWith('O:')) {
+      const o = state.opening.find(x => x.id === id.slice(2)); if (!o) return;
+      if (what === 'time') { if (!v) return; o.time = toHHMM(toMin(v) - (br.delay || 0)); } else o.field = +v;
+      save(); return;
+    }
+    const ov = br.overrides[id] = br.overrides[id] || {};
     const r = br.results[id];
     if (what === 'time') { if (!v) return; const B = resolveBracket(); const m = B.games.find(x => x.key === id); const base = m ? m.time : 0; const day = Math.floor(base / 1440) * 1440; ov.time = day + toMin(v); if (r && r.time != null) r.time = ov.time; }
     else { ov.field = +v; if (r && r.field != null) r.field = +v; }
@@ -466,6 +518,7 @@ function render() {
   renderMast();
   renderTabs();
   renderBanner();
+  if (bracketOnly() && state.tab === 'standings') state.tab = 'schedule';
   const t = state.tab;
   $$('.panel').forEach(p => { p.hidden = p.id !== 'tab-' + t; });
   if (t !== 'schedule') $('#scheduleList').innerHTML = '';   // keep score-box ids unique on the page
@@ -519,16 +572,17 @@ function renderMast() {
   $$('.needs-browser').forEach(b => { b.hidden = EMBEDDED || STANDALONE; });
 }
 function renderTabs() {
-  const has = state.games.length > 0;
+  const only = bracketOnly(), has = state.games.length > 0 || (only && !!(state.bracket && state.bracket.only));
   $$('.tabs [data-tab]').forEach(b => {
     const t = b.dataset.tab;
     b.setAttribute('aria-selected', String(state.tab === t));
     b.tabIndex = state.tab === t ? 0 : -1;
     b.disabled = t !== 'setup' && !has;
     if (t === 'setup') b.hidden = viewOnly;
+    if (t === 'standings') b.hidden = only;
   });
-  const fin = state.games.filter(isFinal).length;
-  $('#cnt-schedule').textContent = has ? `${fin}/${state.games.length}` : '';
+  if (only) { const { items } = allItems(); $('#cnt-schedule').textContent = items.length ? `${items.filter(i => i.final).length}/${items.length}` : ''; }
+  else { const fin = state.games.filter(isFinal).length; $('#cnt-schedule').textContent = has ? `${fin}/${state.games.length}` : ''; }
   const B = resolveBracket();
   $('#cnt-bracket').textContent = B ? (B.champion ? '🏆' : 'Live') : '';
 }
@@ -605,14 +659,31 @@ function renderSetup() {
   if (!fn.contains(document.activeElement)) {
     fn.innerHTML = S.fields.map((f, i) => `<input id="field-${i}" data-fi="${i}" value="${esc(f)}" aria-label="Field ${i + 1} name">`).join('');
   }
+  const only = bracketOnly();
+  $('#tMode').value = S.mode;
+  $$('.pool-only').forEach(el => { el.hidden = only; });
+  $('#openingCard').hidden = !only;
+  if (only && !$('#opList').contains(document.activeElement)) renderOpening();
   renderSetupDerived();
   const hasOrder = state.order.length > 0;
-  $('#drawCard').hidden = !hasOrder;
+  $('#drawCard').hidden = !hasOrder || only;
   $('#drawList').innerHTML = state.order.map(t => `<li>${esc(t)}</li>`).join('');
 }
 function renderSetupDerived() {
   const S = state.settings, teams = teamList(), n = teams.length;
   $('#teamCount').textContent = n;
+  if (bracketOnly()) {
+    const raw = $('#teamsInput').value.split('\n').map(x => x.trim()).filter(Boolean), dupes = raw.length - n;
+    $('#teamNote').className = 'note';
+    $('#teamNote').textContent = dupes ? `${dupes} duplicate name${dupes > 1 ? 's' : ''} ignored.` : '';
+    const built = !!(state.bracket && state.bracket.only);
+    $('#planNote').textContent = n < 2 ? 'Add at least 2 teams.' : built
+      ? 'The bracket is live. Changes to first-round games and teams show up right away.'
+      : `${n} teams, double elimination. Set the first-round games, then build the bracket. Later rounds are about ${S.slotMinutes} minutes apart.`;
+    $('#drawBtn').textContent = built ? 'Go to schedule' : 'Build bracket';
+    $('#retimeBtn').hidden = true;
+    return;
+  }
   const raw = $('#teamsInput').value.split('\n').map(x => x.trim()).filter(Boolean);
   const dupes = raw.length - n;
   const changed = state.order.length && (n !== state.order.length || teams.some(t => !state.order.includes(t)));
@@ -634,6 +705,72 @@ function renderSetupDerived() {
     (n % 2 && per % 2 && N && N < n - 1 ? ' With an odd number of teams, one team plays one fewer game.' : '');
   $('#drawBtn').textContent = state.games.length ? 'Re-draw pool & rebuild schedule' : 'Draw pool & build schedule';
   $('#retimeBtn').hidden = !state.games.length || changed;
+}
+
+/* ---------- First-round editor (bracket only) ---------- */
+function openingIssues() {
+  const list = openingSorted(), num = {}, teams = state.teams, errors = [], info = [], bad = new Set(), where = {};
+  list.forEach((o, k) => { num[o.id] = k + 1; });
+  list.forEach((o, k) => {
+    const g = `G${k + 1}`;
+    if (!o.a || !o.b) { errors.push(`${g} needs two teams.`); bad.add(o.id); }
+    if (o.a && o.a === o.b) { errors.push(`${g} has the same pick on both sides.`); bad.add(o.id); }
+    [o.a, o.b].forEach(ref => {
+      if (!ref) return;
+      const v = ref.slice(2);
+      if (ref[0] === 'T') {
+        if (!teams.includes(v)) { errors.push(`${g}: ${v} isn't in the team list.`); bad.add(o.id); }
+        else if (where[v]) { errors.push(`${v} is in ${where[v]} and ${g}.`); bad.add(o.id); }
+        else where[v] = g;
+      } else if (!num[v] || num[v] >= k + 1) { errors.push(`${g} points to a game that isn't before it.`); bad.add(o.id); }
+    });
+  });
+  const slots = {};
+  list.forEach((o, k) => { const key = toMin(o.time) + '|' + o.field; if (slots[key]) { errors.push(`G${slots[key]} and G${k + 1} are both on ${fieldName(o.field)} at ${fmt(o.time)}.`); bad.add(o.id); } else slots[key] = k + 1; });
+  const out = teams.filter(t => !where[t]);
+  if (out.length && list.length) info.push(`Bye to round 2: ${out.join(', ')}.`);
+  return { errors, info, bad };
+}
+function opOptions(o, side, k, list, used) {
+  const cur = o[side] || '';
+  let h = `<option value="">Pick a team</option><optgroup label="Teams">` + state.teams.map(t => {
+    const v = 'T|' + t, elsewhere = used[t] && used[t] !== o.id + side;
+    return `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(t)}${elsewhere ? ' ✓' : ''}</option>`;
+  }).join('') + `</optgroup>`;
+  const refs = [];
+  list.forEach((e, j) => { if (j < k || cur === 'W|' + e.id || cur === 'L|' + e.id) refs.push([`W|${e.id}`, `Winner of G${j + 1}`], [`L|${e.id}`, `Loser of G${j + 1}`]); });
+  if (refs.length) h += `<optgroup label="Earlier games">` + refs.map(([v, l]) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(l)}</option>`).join('') + `</optgroup>`;
+  if (cur && cur[0] === 'T' && !state.teams.includes(cur.slice(2))) h += `<option value="${esc(cur)}" selected>${esc(cur.slice(2))} (not in team list)</option>`;
+  return h;
+}
+function renderOpening() {
+  const list = openingSorted(), used = {}, { errors, info, bad } = openingIssues();
+  list.forEach(o => ['a', 'b'].forEach(sd => { const r = o[sd]; if (r && r[0] === 'T') used[r.slice(2)] = o.id + sd; }));
+  const ro = viewOnly ? 'disabled' : '';
+  $('#opList').innerHTML = list.length ? list.map((o, k) => `<div class="op-row${bad.has(o.id) ? ' bad' : ''}" data-oid="${esc(o.id)}">
+    <div class="op-top"><span class="gno">G${k + 1}</span>
+      <input type="time" data-op="time" value="${esc(toHHMM(toMin(o.time)))}" aria-label="G${k + 1} start time" ${ro}>
+      <select data-op="field" aria-label="G${k + 1} field" ${ro}>${state.settings.fields.map((f, i) => `<option value="${i}" ${i === o.field ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
+      <button class="btn btn-sm btn-icon" type="button" data-op-del aria-label="Remove G${k + 1}" ${ro}>×</button></div>
+    <div class="op-teams"><select data-op="a" aria-label="G${k + 1} first team" ${ro}>${opOptions(o, 'a', k, list, used)}</select><span class="vs">vs</span><select data-op="b" aria-label="G${k + 1} second team" ${ro}>${opOptions(o, 'b', k, list, used)}</select></div>
+  </div>`).join('') : `<p class="note" style="margin:0">No games yet. Tap “Fill from team list” or “+ Add game”.</p>`;
+  const n = $('#opNote');
+  n.className = 'note' + (errors.length ? ' warn' : '');
+  n.textContent = [...errors, ...info].join(' ');
+}
+/* Next open time and field after the last first-round game */
+function nextOpeningSlot() {
+  const list = openingSorted(), F = state.settings.fields.length;
+  if (!list.length) return { time: state.settings.startTime, field: 0 };
+  const last = toMin(list[list.length - 1].time), at = list.filter(o => toMin(o.time) === last).map(o => o.field);
+  for (let f = 0; f < F; f++) if (!at.includes(f)) return { time: toHHMM(last), field: f };
+  return { time: toHHMM(last + state.settings.slotMinutes), field: 0 };
+}
+function autoOpening() {
+  const t = state.teams, F = state.settings.fields.length, len = state.settings.slotMinutes, st = toMin(state.settings.startTime);
+  const games = [];
+  for (let i = 0; i + 1 < t.length; i += 2) games.push(['T|' + t[i], 'T|' + t[i + 1]]);
+  state.opening = games.map(([a, b], k) => ({ id: uid(), time: toHHMM(st + Math.floor(k / F) * len), field: k % F, a, b }));
 }
 
 /* ---------- Schedule ---------- */
@@ -676,14 +813,21 @@ function renderSchedule() {
   sel.value = ui.team;
   $('#editToggle').checked = ui.edit;
   $('#editToggle').closest('label').hidden = viewOnly; $('#delaySel').closest('label').hidden = viewOnly;
-  const { items } = allItems();
+  const { items, B } = allItems();
   const pending = items.filter(i => !i.final && known(i.a) && known(i.b));
   const nextT = pending.length ? Math.min(...pending.map(i => i.t)) : null;
   const shown = ui.team ? items.filter(i => (i.a && i.a.team === ui.team) || (i.b && i.b.team === ui.team)) : items;
 
   // team card
   const tc = $('#teamCard');
-  if (ui.team) {
+  if (ui.team && bracketOnly()) {
+    const mine = items.filter(i => i.final && !i.tied && ((i.a && i.a.team === ui.team) || (i.b && i.b.team === ui.team)));
+    const w = mine.filter(i => winnerOf(i) === ui.team).length, l = mine.length - w, L = B && B.losses ? B.losses[ui.team] || 0 : 0;
+    const st = B && B.champion && B.champion.team === ui.team ? 'Champion' : L >= 2 ? 'Out' : L === 1 ? '1 loss' : 'Unbeaten';
+    tc.innerHTML = `<div class="team-card"><h3>${esc(ui.team)}</h3>
+      <div class="stat"><b>${w}-${l}</b><span>Record</span></div>
+      <div class="stat"><b>${st}</b><span>Status</span></div></div>`;
+  } else if (ui.team) {
     const r = rankTeams(), idx = r.findIndex(x => x.team === ui.team), s = r[idx];
     tc.innerHTML = `<div class="team-card"><h3>${esc(ui.team)}</h3>
       <div class="stat"><b>${s.w}-${s.l}${s.t ? '-' + s.t : ''}</b><span>Record</span></div>
@@ -737,7 +881,7 @@ function renderStandings() {
 function bracketMatch(m, extraCls = '') {
   const it = { kind: 'bracket', id: m.key, a: m.a, b: m.b, sa: m.sa, sb: m.sb, final: m.final, tied: m.tied, t: m.time, field: m.field };
   const w = m.winner && m.winner.team;
-  const row = (s, label, side) => `<div class="m-row">${s && !s.team ? `<span class="tm tbd"><span class="seed">#${s.seed}</span><span>TBD</span></span>` : s ? `<span class="tm${w === s.team ? ' won' : ''}"><span class="seed">#${s.seed}</span><span>${esc(s.team)}</span></span>` : `<span class="tm tbd">${esc(label || 'TBD')}</span>`}${scoreInput(it, side)}</div>`;
+  const row = (s, label, side) => `<div class="m-row">${s && !s.team ? `<span class="tm tbd"><span class="seed">#${s.seed}</span><span>TBD</span></span>` : s ? `<span class="tm${w === s.team ? ' won' : ''}">${s.seed ? `<span class="seed">#${s.seed}</span>` : ''}<span>${esc(s.team)}</span></span>` : `<span class="tm tbd">${esc(label || 'TBD')}</span>`}${scoreInput(it, side)}</div>`;
   const tag = m.final && m.tied ? '<span class="tag bad">Tie</span>' : m.final ? '<span class="tag final">Final</span>' : '';
   return `<div class="match ${m.final ? 'is-final' : ''} ${extraCls}">
     <div class="m-meta"><span>G${m.num} · ${fmt(m.time)} · ${esc(fieldName(m.field))}</span>${tag}</div>
@@ -747,6 +891,10 @@ function trophy() { return `<svg width="34" height="34" viewBox="0 0 24 24" aria
 function renderBracket() {
   const area = $('#bracketArea'), br = state.bracket, S = state.settings;
   const fin = state.games.filter(isFinal).length, total = state.games.length;
+  if (!br && bracketOnly()) {
+    area.innerHTML = `<div class="empty"><h3>No bracket yet</h3><p>Set the first-round games on the Setup tab, then tap Build bracket.</p></div>`;
+    return;
+  }
   if (!br) {
     const seeds = projectedSeeds(), r = Object.fromEntries(rankTeams().map(x => [x.team, x]));
     area.innerHTML = `<div class="card">
@@ -760,22 +908,22 @@ function renderBracket() {
   const B = resolveBracket();
   let html = '';
   if (seedsChanged() && !viewOnly) html += `<div class="banner warn"><p>Pool results changed after the bracket was built, so the seeds no longer match the standings.</p><div class="actions"><button class="btn btn-sm" id="reseedBtn">Rebuild with new seeds</button></div></div>`;
-  html += `<div class="card"><div class="card-head"><h2 class="h-card">Championship bracket</h2><div class="actions"><span class="pill">${B.format === 'double' ? 'Double' : 'Single'} elimination · ${br.count} teams</span>${viewOnly ? '' : `<label class="switch"><input type="checkbox" id="editToggle2" ${ui.edit ? 'checked' : ''}><span>Edit times</span></label><button class="btn btn-sm" id="rebuildBtn">Rebuild</button>`}</div></div>
-    <p class="note" style="margin:0 0 6px">${poolDone() || br.seeds ? 'Enter the final score in each game. The winner moves on automatically.' : `Seeds show as TBD until pool play is final (${state.games.filter(g => !isFinal(g)).length} pool game${state.games.filter(g => !isFinal(g)).length === 1 ? '' : 's'} left). Teams fill in by themselves.`}${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
-  if (B.champion) html += `<div class="champ" style="margin:12px 0">${profileOf().cause ? RIBBON : trophy()}<p class="eyebrow">${esc(state.name || 'Tournament')} champion</p><strong>${esc(B.champion.team)}</strong><span class="note" style="margin:0">#${B.champion.seed} seed</span></div>`;
+  html += `<div class="card"><div class="card-head"><h2 class="h-card">Championship bracket</h2><div class="actions"><span class="pill">${B.format === 'double' ? 'Double' : 'Single'} elimination · ${br.only ? state.order.length : br.count} teams</span>${viewOnly ? '' : `<label class="switch"><input type="checkbox" id="editToggle2" ${ui.edit ? 'checked' : ''}><span>Edit times</span></label><button class="btn btn-sm" id="rebuildBtn">Rebuild</button>`}</div></div>
+    <p class="note" style="margin:0 0 6px">${br.only ? 'Enter the final score in each game. After the first round, the app pairs the next games by itself.' : poolDone() || br.seeds ? 'Enter the final score in each game. The winner moves on automatically.' : `Seeds show as TBD until pool play is final (${state.games.filter(g => !isFinal(g)).length} pool game${state.games.filter(g => !isFinal(g)).length === 1 ? '' : 's'} left). Teams fill in by themselves.`}${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
+  if (B.champion) html += `<div class="champ" style="margin:12px 0">${profileOf().cause ? RIBBON : trophy()}<p class="eyebrow">${esc(state.name || 'Tournament')} champion</p><strong>${esc(B.champion.team)}</strong>${B.champion.seed ? `<span class="note" style="margin:0">#${B.champion.seed} seed</span>` : ''}</div>`;
 
   if (B.format === 'single') {
     html += `<div class="bracket-scroll"><div class="bk">` + B.rounds.map((round) => `<div class="bk-col"><h3>${esc(round[0].label)}</h3><div class="bk-slots">${round.map(m => `<div class="bk-slot">${m.bye ? `<div class="match is-bye"><div class="m-meta"><span>Bye</span></div><div class="m-row"><span class="tm"><span class="seed">#${m.winner.seed}</span><span>${esc(m.winner.team || 'TBD')}</span></span></div></div>` : bracketMatch(m)}</div>`).join('')}</div></div>`).join('') + `</div></div>`;
   } else {
     const L = B.losses;
-    if (B.seeds.every(known)) html += `<div class="status-strip" style="margin:12px 0">${B.seeds.map(sd => sd.team).map((t, i) => { const l = L[t] || 0; return `<span class="st ${l >= 2 ? 'out' : 'l' + l}"><span>#${i + 1} ${esc(t)}</span><i>${l >= 2 ? 'Out' : l === 1 ? '1 loss' : 'Unbeaten'}</i></span>`; }).join('')}</div>`;
+    if (B.seeds.every(known)) html += `<div class="status-strip" style="margin:12px 0">${B.seeds.map(sd => sd.team).map((t, i) => { const l = L[t] || 0; return `<span class="st ${l >= 2 ? 'out' : 'l' + l}"><span>${br.only ? '' : `#${i + 1} `}${esc(t)}</span><i>${l >= 2 ? 'Out' : l === 1 ? '1 loss' : 'Unbeaten'}</i></span>`; }).join('')}</div>`;
     html += `<div class="bracket-scroll"><div class="de-cols">` + B.rounds.map((rd, ri) => {
       const groups = { w: [], e: [], c: [] }; rd.games.forEach(g => groups[g.group].push(g));
-      const name = { w: 'Winners side', e: 'Elimination side', c: 'Championship' };
-      const body = ['c', 'w', 'e'].filter(k => groups[k].length).map(k => `<p class="de-group ${k}">${name[k]}</p>${groups[k].map(g => bracketMatch(g)).join('')}`).join('');
+      const name = { w: rd.title === 'First round' ? 'First round' : 'Winners side', e: 'Elimination side', c: 'Championship' };
+      const body = ['c', 'w', 'e'].filter(k => groups[k].length).map(k => `${name[k] === rd.title ? '' : `<p class="de-group ${k}">${name[k]}</p>`}${groups[k].map(g => bracketMatch(g)).join('')}`).join('');
       const byes = rd.byes.length ? `<div class="byes">Bye this round: ${rd.byes.map(b => esc(sideName(b))).join(', ')}</div>` : '';
-      return `<div class="de-col"><h3>Round ${ri + 1}</h3>${body}${byes}</div>`;
-    }).join('') + (!B.champion ? `<div class="de-col"><h3>Round ${B.rounds.length + 1}</h3><div class="waiting">Pairings appear when every game in round ${B.rounds.length} is final. Next start: about ${fmt(B.rounds[B.rounds.length - 1].nextTime)}.</div></div>` : '') + `</div></div>`;
+      return `<div class="de-col"><h3>${esc(rd.title || `Round ${ri + 1}`)}</h3>${body}${byes}</div>`;
+    }).join('') + (!B.champion ? `<div class="de-col"><h3>Round ${B.rounds.length + 1}</h3><div class="waiting">Pairings appear when every game in the ${esc((B.rounds[B.rounds.length - 1].title || `round ${B.rounds.length}`).toLowerCase())} is final. Next start: about ${fmt(B.rounds[B.rounds.length - 1].nextTime)}.</div></div>` : '') + `</div></div>`;
   }
   html += `</div>`;
   area.innerHTML = html;
@@ -819,7 +967,7 @@ function renderPrint(sel = ui.printSel || 'both') {
       <div class="pv-mrow">${name(m.a, m.aLabel)}${box(m.sa)}</div><div class="pv-mrow">${name(m.b, m.bLabel)}${box(m.sb)}</div></div>`;
     const rounds = B.format === 'single'
       ? B.rounds.map(r => ({ title: r[0].label, games: r.filter(m => !m.bye), byes: r.filter(m => m.bye).map(m => sideName(m.winner)) }))
-      : B.rounds.map((r, i) => ({ title: `Round ${i + 1}`, games: r.games, byes: r.byes.map(sideName) }));
+      : B.rounds.map((r, i) => ({ title: r.title || `Round ${i + 1}`, games: r.games, byes: r.byes.map(sideName) }));
     h += `<section class="pv-section pv-keep"><h2 class="pv-h">${B.format === 'double' ? 'Double' : 'Single'} elimination bracket</h2><div class="pv-bracket">` +
       rounds.map(r => `<div class="pv-round"><h4>${esc(r.title)}</h4>${r.games.map(match).join('')}${r.byes.length ? `<p class="pv-small">Bye: ${r.byes.map(esc).join(', ')}</p>` : ''}</div>`).join('') + `</div></section>`;
   }
@@ -920,7 +1068,7 @@ async function buildExport(sel, mode) {
       [[m.a, m.aLabel, m.sa, 0], [m.b, m.bLabel, m.sb, 1]].forEach(([sd, lb, sc, k]) => {
         const ry = y + 18 + k * 22;
         if (sd && !sd.team) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#666'; c.fillText('TBD', x + 26, ry + 15); }
-        else if (sd) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); setF(c, `${m.winner && m.winner.team === sd.team ? 800 : 600} 12px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, sd.team, MW - 70), x + 26, ry + 15); }
+        else if (sd) { const ox = sd.seed ? 26 : 6; if (sd.seed) { setF(c, `600 9.5px ${FL}`); c.fillStyle = '#555'; c.fillText(`#${sd.seed}`, x + 6, ry + 15); } setF(c, `${m.winner && m.winner.team === sd.team ? 800 : 600} 12px ${FB}`); c.fillStyle = '#111'; c.fillText(fit(c, sd.team, MW - 50 - ox), x + ox, ry + 15); }
         else { setF(c, `italic 500 11px ${FB}`); c.fillStyle = '#666'; c.fillText(fit(c, lb || 'TBD', MW - 50), x + 6, ry + 15); }
         rr(c, x + MW - 36, ry + 2, 30, 18, 3); c.strokeStyle = '#888'; c.stroke();
         if (sc !== '' && sc != null) { setF(c, `800 13px ${FD}`); c.fillStyle = '#111'; c.textAlign = 'center'; c.fillText(String(sc), x + MW - 21, ry + 16); c.textAlign = 'left'; }
@@ -947,7 +1095,7 @@ async function buildExport(sel, mode) {
         });
       };
     } else {
-      const cols = B.rounds.map((rd, i) => ({ title: `Round ${i + 1}`, games: rd.games, byes: rd.byes.map(sideName) }));
+      const cols = B.rounds.map((rd, i) => ({ title: rd.title || `Round ${i + 1}`, games: rd.games, byes: rd.byes.map(sideName) }));
       const colH = col => 22 + col.games.length * (MH + GAP + 14) + (col.byes.length ? 18 : 0);
       bw = cols.length * MW + (cols.length - 1) * 16; bh = Math.max(...cols.map(colH));
       const gname = { w: 'WINNERS SIDE', e: 'ELIMINATION SIDE', c: 'CHAMPIONSHIP' };
@@ -1201,8 +1349,8 @@ function scheduleText() {
     const sc = i.final ? `  ${i.sa}-${i.sb} Final` : '';
     lines.push(`  G${i.num} ${fieldName(i.field)}${i.kind === 'bracket' ? ' (' + i.label + ')' : ''}: ${a} vs ${b}${sc}`);
   });
-  lines.push('', 'Standings');
-  rankTeams().forEach((r, i) => lines.push(`  ${i + 1}. ${r.team} ${r.w}-${r.l}${r.t ? '-' + r.t : ''} (RD ${r.rd > 0 ? '+' : ''}${r.rd})`));
+  if (!bracketOnly()) lines.push('', 'Standings');
+  if (!bracketOnly()) rankTeams().forEach((r, i) => lines.push(`  ${i + 1}. ${r.team} ${r.w}-${r.l}${r.t ? '-' + r.t : ''} (RD ${r.rd > 0 ? '+' : ''}${r.rd})`));
   if (B && B.champion) lines.push('', `Champion: ${B.champion.team}`);
   if (P.cause) lines.push('', P.cause);
   return lines.join('\n');
@@ -1243,6 +1391,7 @@ function readSettingsFromForm() {
   S.bracketFormat = $('#bracketFormat').value;
   S.advance = +$('#advance').value || 0;
   state.teams = teamList();
+  if (bracketOnly() && state.bracket && state.bracket.only) state.order = [...state.teams];
 }
 function setTab(t) { state.tab = t; save(); render(); window.scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }); }
 function anyScores() { return state.games.some(g => g.sa !== '' || g.sb !== '') || bracketHasScores(); }
@@ -1275,7 +1424,7 @@ function bind() {
     if (act === 'share') openShare();
     if (act === 'new') {
       if (await ask('Start a new tournament?', 'This clears every team, game and score saved in this browser. Download a backup first if you want to keep it.', 'Clear everything', true)) {
-        const keep = state.settings, keepProfile = state.profile; state = lockedProfile() ? freshFor(lockedProfile()) : defaults(); state.profile = keepProfile; state.settings = { ...state.settings, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
+        const keep = state.settings, keepProfile = state.profile; state = lockedProfile() ? freshFor(lockedProfile()) : defaults(); state.profile = keepProfile; state.settings = { ...state.settings, mode: keep.mode, fields: keep.fields, startTime: keep.startTime, slotMinutes: keep.slotMinutes };
         viewOnly = false; save(); render(); $('#tName').focus();
       }
     }
@@ -1377,16 +1526,61 @@ function bind() {
     save(); render(); toast(`${P.label} profile applied.`);
   });
   $('#teamsInput').addEventListener('input', () => { readSettingsFromForm(); save(); renderSetupDerived(); renderMast(); });
+  $('#teamsInput').addEventListener('change', () => { if (bracketOnly()) renderOpening(); });
   $('#sampleBtn').addEventListener('click', () => { $('#teamsInput').value = SAMPLE.join('\n'); readSettingsFromForm(); save(); renderSetupDerived(); });
   $('#fieldNames').addEventListener('input', e => { const i = +e.target.dataset.fi; state.settings.fields[i] = e.target.value || `Field ${i + 1}`; save(); });
+  $('#fieldNames').addEventListener('change', () => { if (bracketOnly()) renderOpening(); });
   $('#fieldPlus').addEventListener('click', () => { const f = state.settings.fields; if (f.length < 16) { f.push(`Field ${f.length + 1}`); save(); renderSetup(); renderMast(); } });
   $('#fieldMinus').addEventListener('click', () => {
     const f = state.settings.fields; if (f.length <= 1) return; f.pop();
     state.games.forEach(g => { if (g.field >= f.length) g.field = f.length - 1; });
+    state.opening.forEach(g => { if (g.field >= f.length) g.field = f.length - 1; });
     save(); renderSetup(); renderMast();
+  });
+  $('#tMode').addEventListener('change', async e => {
+    const to = e.target.value, S = state.settings;
+    if (to === S.mode) return;
+    const busy = state.games.length || state.bracket;
+    if (busy && !(await ask(to === 'bracket' ? 'Switch to bracket only?' : 'Switch to pool play?', 'The current schedule, bracket and every score will be cleared. Your team list stays.', 'Switch', true))) { e.target.value = S.mode; return; }
+    S.mode = to; state.games = []; state.bracket = null; state.short = []; state.order = to === 'bracket' ? [] : state.order;
+    if (to === 'bracket') { readSettingsFromForm(); if (!state.opening.length) autoOpening(); }
+    state.demo = false; save(); render();
+  });
+  $('#opList').addEventListener('change', e => {
+    const el = e.target, row = el.closest('[data-oid]'); if (!row || !el.dataset.op) return;
+    const o = state.opening.find(x => x.id === row.dataset.oid); if (!o) return;
+    const k = el.dataset.op;
+    if (k === 'time') { if (!el.value) return; o.time = el.value; }
+    else if (k === 'field') o.field = +el.value;
+    else o[k] = el.value;
+    save(); renderOpening(); renderMast(); renderTabs();
+  });
+  $('#opList').addEventListener('click', async e => {
+    const b = e.target.closest('[data-op-del]'); if (!b) return;
+    const id = b.closest('[data-oid]').dataset.oid;
+    const hasScore = state.bracket && state.bracket.results['O:' + id];
+    if (hasScore && !(await ask('Remove this game?', 'It already has a score. Removing it changes the rest of the bracket.', 'Remove', true))) return;
+    state.opening = state.opening.filter(x => x.id !== id);
+    state.opening.forEach(o => { ['a', 'b'].forEach(sd => { if (o[sd] && o[sd][0] !== 'T' && o[sd].slice(2) === id) o[sd] = ''; }); });
+    save(); renderOpening(); renderMast(); renderTabs();
+  });
+  $('#opAdd').addEventListener('click', () => { readSettingsFromForm(); state.opening.push({ id: uid(), ...nextOpeningSlot(), a: '', b: '' }); save(); renderOpening(); });
+  $('#opAuto').addEventListener('click', async () => {
+    readSettingsFromForm();
+    if (state.teams.length < 2) { $('#setupMsg').textContent = 'Add at least 2 teams, one per line.'; return; }
+    if (state.opening.length && !(await ask('Replace the first-round games?', 'Pairs the teams in the order they are listed, starting at first pitch and rotating through your fields. With an odd number, the last team gets a bye.', 'Replace', bracketHasScores()))) return;
+    autoOpening(); save(); renderOpening(); renderMast();
   });
   $('#drawBtn').addEventListener('click', async () => {
     readSettingsFromForm();
+    if (bracketOnly()) {
+      if (state.teams.length < 2) { $('#setupMsg').textContent = 'Add at least 2 teams, one per line.'; $('#teamsInput').focus(); return; }
+      const { errors } = openingIssues();
+      if (errors.length) { $('#setupMsg').textContent = 'Fix the first-round games first: ' + errors[0]; return; }
+      $('#setupMsg').textContent = '';
+      if (!(state.bracket && state.bracket.only)) { state.demo = false; state.games = []; state.short = []; state.order = [...state.teams]; buildBracket(); save(); }
+      setTab('schedule'); return;
+    }
     if (state.teams.length < 2) { $('#setupMsg').textContent = 'Add at least 2 teams, one per line.'; $('#teamsInput').focus(); return; }
     $('#setupMsg').textContent = '';
     if (anyScores() && !(await ask('Re-draw and rebuild?', 'A new draw makes new matchups. Every score and the bracket will be cleared.', 'Re-draw', true))) return;
@@ -1449,8 +1643,8 @@ function bind() {
       buildBracket(); save(); render();
     }
     if (id === 'rebuildBtn' || id === 'reseedBtn') {
-      if (bracketHasScores() && !(await ask('Rebuild the bracket?', 'Seeds are taken from the current standings and every bracket score is cleared.', 'Rebuild', true))) return;
-      state.bracket.format = state.settings.bracketFormat;
+      if (bracketHasScores() && !(await ask('Rebuild the bracket?', state.bracket.only ? 'Every bracket score is cleared. Your first-round games stay.' : 'Seeds are taken from the current standings and every bracket score is cleared.', 'Rebuild', true))) return;
+      if (!state.bracket.only) state.bracket.format = state.settings.bracketFormat;
       buildBracket(); save(); render(); toast('Bracket rebuilt.');
     }
   });
