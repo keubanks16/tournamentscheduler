@@ -458,3 +458,5 @@ body.locked{overflow:hidden}
 .rule-sec .n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--stitch);color:#fff;font-size:13px;letter-spacing:0}
 .rule-sec ul{margin:8px 0 0;padding-left:22px}
 .rule-sec li{margin:5px 0}
+
+.app-ver{display:block;margin-top:4px;opacity:.6;font-size:12px}

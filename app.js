@@ -1857,7 +1857,19 @@ async function boot() {
 }
 function registerSW() {
   if ('serviceWorker' in navigator && !EMBEDDED && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode unavailable */ });
+    // Pick up new app versions quickly: check on launch and whenever the app comes back to the screen
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => { /* offline mode unavailable */ });
+    let reloaded = false;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded || !hadController) return;
+      const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if (typing) { toast('App updated. It refreshes next time you open it.'); return; }
+      reloaded = true; location.reload();
+    });
   }
 }
 window.__tm = { get state() { return state; }, resolveBracket, rankTeams, allItems }; // handy for debugging in the console
