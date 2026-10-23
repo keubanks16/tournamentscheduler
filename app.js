@@ -304,7 +304,7 @@ function finishMatch(m, res) {
   m.loser = m.winner ? (m.winner === m.a ? m.b : m.a) : null;
 }
 const known = sd => !!(sd && sd.team);
-const sideName = sd => sd ? (sd.team || `#${sd.seed} TBD`) : '';
+const sideName = sd => sd ? (sd.team || sd.label || `#${sd.seed} TBD`) : '';
 function poolDone() { return state.games.length > 0 && state.games.every(isFinal); }
 /* Seeds stay "#1 TBD" until every pool game is final, then fill from the standings.
    They lock once the first bracket score goes in. */
@@ -442,7 +442,108 @@ function resolveDouble(br) {
   }
   return { format: 'double', rounds, games: rounds.flatMap(x => x.games), champion, losses, seeds: seeds.map(ent) };
 }
-function resolveBracket() { const br = state.bracket; if (!br) return null; return br.format === 'double' ? resolveDouble(br) : resolveSingle(br); }
+/* Bracket-only: the whole double-elimination bracket is laid out up front. Every game after
+   the first round points at earlier games ("Winner of G6", "Loser of G6"), and teams fill in
+   as scores go in. Loss counts are known from the structure, so pairings never wait on results. */
+function resolveFixed(br) {
+  const F = state.settings.fields.length, len = state.settings.slotMinutes, teams = state.order;
+  const ent = t => ({ team: t, seed: 0 });
+  const list = openingSorted(), games = [], rounds = [];
+  let num = 1;
+  // a slot is a place in the bracket: a team, or the winner/loser of a game
+  const teamOf = sl => sl.team ? sl.team : sl.g ? (sl.w ? sl.g.winner : sl.g.loser) : null;
+  const labelOf = sl => sl.team ? sl.team : `${sl.w ? 'Winner' : 'Loser'} of G${sl.g.num}`;
+  const play = (g, sa, sb) => {
+    g.sa_ = sa; g.sb_ = sb;
+    const ta = teamOf(sa), tb = teamOf(sb);
+    g.a = ta ? (ta.team ? ta : ent(ta)) : null; g.b = tb ? (tb.team ? tb : ent(tb)) : null;
+    g.aLabel = labelOf(sa); g.bLabel = labelOf(sb);
+    finishMatch(g, resultFor(br, g.key, g.a, g.b));
+    games.push(g);
+  };
+  const place = (g, structural, j) => { const tf = timeFor(br, g.key, structural, resultFor(br, g.key, g.a, g.b), j); g.time = tf.time; g.field = tf.field; };
+  // ---- first round, as entered
+  const info = {}, used = new Set(), appear = new Set(), opGames = [];
+  list.forEach(o => {
+    const mk = ref => {
+      if (!ref) return null;
+      const v = ref.slice(2);
+      if (ref[0] === 'T') { appear.add(v); return { team: v, L: 0 }; }
+      const src = info[v]; if (!src) return null;
+      used.add(v + ref[0]);
+      return ref[0] === 'W' ? { g: src.g, w: true, L: src.L } : { g: src.g, w: false, L: src.L + 1 };
+    };
+    const sa = mk(o.a), sb = mk(o.b), group = (sa && sa.L) || (sb && sb.L) ? 'e' : 'w';
+    const g = { key: 'O:' + o.id, num: num++, label: group === 'e' ? 'Elimination side' : 'First round', group, opening: true };
+    if (!sa || !sb) { g.a = g.b = null; g.aLabel = sa ? labelOf(sa) : 'Pick a team'; g.bLabel = sb ? labelOf(sb) : 'Pick a team'; finishMatch(g, null); games.push(g); }
+    else play(g, sa, sb);
+    place(g, toMin(o.time), o.field);
+    info[o.id] = { g, L: Math.max(sa ? sa.L : 0, sb ? sb.L : 0) };
+    opGames.push(g);
+  });
+  // slots heading into round 2: teams with a bye, then everything the first round produced
+  const byeCount = new Map();
+  let pool = teams.filter(t => !appear.has(t)).map(t => { const sl = { team: t, L: 0 }; byeCount.set(sl, 1); return sl; });
+  const firstByes = pool.map(sl => ({ team: sl.team, seed: 0 }));
+  list.forEach(o => {
+    const { g, L } = info[o.id];
+    if (!used.has(o.id + 'W')) pool.push({ g, w: true, L });
+    if (!used.has(o.id + 'L')) pool.push({ g, w: false, L: L + 1 });
+  });
+  pool = pool.filter(sl => sl.L < 2);
+  let cursor = list.length ? Math.max(...list.map(o => toMin(o.time))) + len : toMin(state.settings.startTime);
+  if (list.length) rounds.push({ title: 'First round', games: opGames, byes: firstByes, nextTime: cursor + (br.delay || 0) });
+  // ---- later rounds
+  let finalG = null, ifG = null, champSlot = null;
+  for (let r = 0; r < 60; r++) {
+    const zero = pool.filter(sl => sl.L === 0), one = pool.filter(sl => sl.L === 1);
+    if (zero.length + one.length <= 1) { champSlot = zero[0] || one[0] || null; break; }
+    const rg = [], byes = [], next = { w: [], e: [], drop: [], bye0: [], bye1: [] };
+    const mkGame = (sa, sb, label, group) => { const g = { key: `X${r}-${rg.length}`, num: num++, label, group }; play(g, sa, sb); rg.push(g); return g; };
+    if (zero.length === 1 && one.length === 1) {
+      finalG = mkGame(zero[0], one[0], 'Championship', 'c');
+    } else {
+      const pairUp = (arr, label, group, wDest, lDest, byeDest) => {
+        const l = [...arr];
+        if (l.length % 2) {
+          let bi = 0; l.forEach((sl, i) => { if ((byeCount.get(sl) || 0) < (byeCount.get(l[bi]) || 0)) bi = i; });
+          const sl = l.splice(bi, 1)[0]; byeDest.push(sl);
+          byes.push({ team: teamOf(sl) && (teamOf(sl).team || teamOf(sl)), label: labelOf(sl), seed: 0 });
+        }
+        while (l.length) {
+          const sa = l.shift(), sb = l.pop(), g = mkGame(sa, sb, label, group);
+          wDest.push({ g, w: true, L: sa.L }); lDest.push({ g, w: false, L: sa.L + 1 });
+        }
+      };
+      const sink = [];
+      pairUp(zero, 'Winners side', 'w', next.w, next.drop, next.bye0);
+      pairUp(one, 'Elimination side', 'e', next.e, sink, next.bye1);
+      [...next.bye0, ...next.bye1].forEach(sl => byeCount.set(sl, (byeCount.get(sl) || 0) + 1));
+      pool = [...next.bye0, ...next.w, ...next.bye1, ...next.e, ...next.drop];
+    }
+    rg.forEach((g, j) => place(g, cursor + Math.floor(j / F) * len, j % F));
+    cursor += Math.max(1, Math.ceil(rg.length / F)) * len;
+    rounds.push({ title: finalG && rg.includes(finalG) ? 'Championship' : `Round ${rounds.length + 1}`, games: rg, byes, nextTime: cursor + (br.delay || 0) });
+    if (finalG) {
+      // played only if the elimination-side team wins the first championship game
+      ifG = { key: `X${r + 1}-0`, num: num++, label: 'Championship · if necessary', group: 'c', ifNeeded: true };
+      play(ifG, { g: finalG, w: true, L: 1 }, { g: finalG, w: false, L: 1 });
+      place(ifG, cursor, 0);
+      const unbeaten = teamOf(finalG.sa_);
+      ifG.skip = finalG.final && !finalG.tied && finalG.winner && finalG.winner.team === (unbeaten && (unbeaten.team || unbeaten));
+      if (ifG.skip) games.splice(games.indexOf(ifG), 1);
+      else rounds.push({ title: 'If necessary', games: [ifG], byes: [], nextTime: cursor + len + (br.delay || 0) });
+      break;
+    }
+  }
+  let champion = null;
+  if (finalG) champion = ifG && ifG.skip ? finalG.winner : ifG && ifG.winner ? ifG.winner : null;
+  else if (champSlot) { const t = teamOf(champSlot); champion = t ? (t.team ? t : ent(t)) : null; }
+  const losses = Object.fromEntries(teams.map(t => [t, 0]));
+  games.forEach(g => { if (g.loser && g.loser.team in losses) losses[g.loser.team]++; });
+  return { format: 'double', fixed: true, rounds, games, champion, losses, seeds: teams.map(ent), ifSkipped: !!(ifG && ifG.skip) };
+}
+function resolveBracket() { const br = state.bracket; if (!br) return null; if (br.only) return resolveFixed(br); return br.format === 'double' ? resolveDouble(br) : resolveSingle(br); }
 function buildBracket() {
   if (bracketOnly()) { state.bracket = { format: 'double', only: true, seeds: null, count: state.order.length, results: {}, overrides: {}, delay: 0 }; return; }
   state.bracket = { format: state.settings.bracketFormat, seeds: null, count: advancingCount(), results: {}, overrides: {}, delay: 0 };
@@ -576,7 +677,7 @@ function renderMast() {
   if (items.length) {
     const done = items.filter(i => i.final).length;
     $('#prog').hidden = false;
-    $('#progLabel').textContent = B && B.champion ? `Champion: ${B.champion.team}` : `${done} of ${items.length}${B && B.format === 'double' && !B.champion ? '+' : ''} games final`;
+    $('#progLabel').textContent = B && B.champion ? `Champion: ${B.champion.team}` : `${done} of ${items.length}${B && B.format === 'double' && !B.fixed && !B.champion ? '+' : ''} games final`;
     $('#progBar').style.width = (B && B.champion ? 100 : Math.round(done / items.length * 100)) + '%';
   } else $('#prog').hidden = true;
   renderLiveChip();
@@ -925,7 +1026,7 @@ function renderBracket() {
   let html = '';
   if (seedsChanged() && !viewOnly) html += `<div class="banner warn"><p>Pool results changed after the bracket was built, so the seeds no longer match the standings.</p><div class="actions"><button class="btn btn-sm" id="reseedBtn">Rebuild with new seeds</button></div></div>`;
   html += `<div class="card"><div class="card-head"><h2 class="h-card">Championship bracket</h2><div class="actions"><span class="pill">${B.format === 'double' ? 'Double' : 'Single'} elimination · ${br.only ? state.order.length : br.count} teams</span>${viewOnly ? '' : `<label class="switch"><input type="checkbox" id="editToggle2" ${ui.edit ? 'checked' : ''}><span>Edit times</span></label><button class="btn btn-sm" id="rebuildBtn">Rebuild</button>`}</div></div>
-    <p class="note" style="margin:0 0 6px">${br.only ? 'Enter the final score in each game. After the first round, the app pairs the next games by itself.' : poolDone() || br.seeds ? 'Enter the final score in each game. The winner moves on automatically.' : `Seeds show as TBD until pool play is final (${state.games.filter(g => !isFinal(g)).length} pool game${state.games.filter(g => !isFinal(g)).length === 1 ? '' : 's'} left). Teams fill in by themselves.`}${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
+    <p class="note" style="margin:0 0 6px">${br.only ? `Enter the final score in each game. Winners and losers move into their next games by themselves.${B.ifSkipped ? ' The if-necessary game was not needed.' : ' The if-necessary game is played only if the elimination-side team wins the first championship game.'}` : poolDone() || br.seeds ? 'Enter the final score in each game. The winner moves on automatically.' : `Seeds show as TBD until pool play is final (${state.games.filter(g => !isFinal(g)).length} pool game${state.games.filter(g => !isFinal(g)).length === 1 ? '' : 's'} left). Teams fill in by themselves.`}${B.format === 'double' ? ' A team is out after its second loss.' : ''}</p>`;
   if (B.champion) html += `<div class="champ" style="margin:12px 0">${profileOf().cause ? RIBBON : trophy()}<p class="eyebrow">${esc(state.name || 'Tournament')} champion</p><strong>${esc(B.champion.team)}</strong>${B.champion.seed ? `<span class="note" style="margin:0">#${B.champion.seed} seed</span>` : ''}</div>`;
 
   if (B.format === 'single') {
@@ -939,7 +1040,7 @@ function renderBracket() {
       const body = ['c', 'w', 'e'].filter(k => groups[k].length).map(k => `${name[k] === rd.title ? '' : `<p class="de-group ${k}">${name[k]}</p>`}${groups[k].map(g => bracketMatch(g)).join('')}`).join('');
       const byes = rd.byes.length ? `<div class="byes">Bye this round: ${rd.byes.map(b => esc(sideName(b))).join(', ')}</div>` : '';
       return `<div class="de-col"><h3>${esc(rd.title || `Round ${ri + 1}`)}</h3>${body}${byes}</div>`;
-    }).join('') + (!B.champion ? `<div class="de-col"><h3>Round ${B.rounds.length + 1}</h3><div class="waiting">Pairings appear when every game in the ${esc((B.rounds[B.rounds.length - 1].title || `round ${B.rounds.length}`).toLowerCase())} is final. Next start: about ${fmt(B.rounds[B.rounds.length - 1].nextTime)}.</div></div>` : '') + `</div></div>`;
+    }).join('') + (!B.champion && !B.fixed ? `<div class="de-col"><h3>Round ${B.rounds.length + 1}</h3><div class="waiting">Pairings appear when every game in the ${esc((B.rounds[B.rounds.length - 1].title || `round ${B.rounds.length}`).toLowerCase())} is final. Next start: about ${fmt(B.rounds[B.rounds.length - 1].nextTime)}.</div></div>` : '') + `</div></div>`;
   }
   html += `</div>`;
   area.innerHTML = html;
