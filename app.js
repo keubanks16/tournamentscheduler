@@ -44,6 +44,19 @@ const PROFILES = {
       date: '2026-10-24',
       location: 'Taylor County Rec Department, 183 Charing Road, Butler, GA 31006'
     },
+    rules: {
+      title: 'Tournament rules',
+      sections: [
+        ['Game format', ['Time limit: 45 minutes.', 'Innings: 6-6-3 format.', 'The away team bats for 6 straight outs. The bases clear after the 3rd out.', 'The home team fields for 6 straight outs and leaves the field after the 3rd out.', 'The last inning is 3 outs only.', 'If time runs out, the inning is finished, and the home team gets the last at bat if needed.', 'In a tie game, every inning after that is played at 3 outs.', 'Run rule: 15 after the second set of 6 outs.']],
+        ['Bats', ['No bat rules.']],
+        ['Softballs', ['Ball type: 44/400.', 'Butler Fire Department provides the balls.']],
+        ['Pitching', ['One pitch is all you get.', 'You must have your own pitcher.']],
+        ['Fielding', ['10 players in the field: catcher, first base, second base, third base, shortstop, left field, left-center field, right-center field, right field and rover.']],
+        ['Hitting', ['Bat up to 12 players, with a minimum of 10.', 'You can have 1 DH and 1 EH.', 'Foul ball = out, unless you bought a foul ball band (1 extra pitch).', 'Swing and miss, or a watched pitch with no swing = out.', 'Hitting the L-screen = out, unless you bought a foul ball band (1 extra pitch).', 'The pitcher may hit but does not have to.', 'If the pitcher hits, someone must rotate in and pitch to them for that at bat.']],
+        ['Home runs', ['No bandmans.', '5 home runs per team per game. Any home run after 5 is an out.']],
+        ['Base running', ['No stealing.', 'You do not have to run the bases on a home run.']]
+      ]
+    },
     details: ['Co-ed teams · All skill levels welcome', '$200 per team · Proceeds support breast cancer research & support', 'Info: Luke Arnold · lmarnold@gmail.com']
   }
 };
@@ -519,6 +532,7 @@ function render() {
   renderTabs();
   renderBanner();
   if (bracketOnly() && state.tab === 'standings') state.tab = 'schedule';
+  if (state.tab === 'rules' && !profileOf().rules) state.tab = state.games.length || state.bracket ? 'schedule' : 'setup';
   const t = state.tab;
   $$('.panel').forEach(p => { p.hidden = p.id !== 'tab-' + t; });
   if (t !== 'schedule') $('#scheduleList').innerHTML = '';   // keep score-box ids unique on the page
@@ -527,6 +541,7 @@ function render() {
   if (t === 'schedule') renderSchedule();
   if (t === 'standings') renderStandings();
   if (t === 'bracket') renderBracket();
+  if (t === 'rules') renderRules();
   renderPrint();
 }
 function applyProfile() {
@@ -577,7 +592,8 @@ function renderTabs() {
     const t = b.dataset.tab;
     b.setAttribute('aria-selected', String(state.tab === t));
     b.tabIndex = state.tab === t ? 0 : -1;
-    b.disabled = t !== 'setup' && !has;
+    b.disabled = t !== 'setup' && t !== 'rules' && !has;
+    if (t === 'rules') b.hidden = !profileOf().rules;
     if (t === 'setup') b.hidden = viewOnly;
     if (t === 'standings') b.hidden = only;
   });
@@ -927,6 +943,13 @@ function renderBracket() {
   }
   html += `</div>`;
   area.innerHTML = html;
+}
+
+/* ---------- Rules ---------- */
+function renderRules() {
+  const R = profileOf().rules; if (!R) { $('#rulesArea').innerHTML = ''; return; }
+  $('#rulesArea').innerHTML = `<div class="card rules-card"><h2 class="h-card">${esc(R.title)}</h2>` +
+    R.sections.map(([h, list], i) => `<section class="rule-sec"><h3 class="h-sub"><span class="n">${i + 1}</span>${esc(h)}</h3><ul>${list.map(x => `<li>${esc(x)}</li>`).join('')}</ul></section>`).join('') + `</div>`;
 }
 
 /* ============================ Printout ============================ */
