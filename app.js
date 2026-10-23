@@ -1104,7 +1104,17 @@ function renderPrint(sel = ui.printSel || 'both') {
 const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
 const RIBBON_PATH = 'M12 1.5c-3.3 0-5.6 2.4-5.6 5.6 0 2.2 1.1 4.6 2.9 7.5L2.6 26.2l3.6 2.6 5.8-9.6 5.8 9.6 3.6-2.6-6.7-11.6c1.8-2.9 2.9-5.3 2.9-7.5 0-3.2-2.3-5.6-5.6-5.6Zm0 3.4c1.3 0 2.2 1 2.2 2.3 0 1.3-.8 3-2.2 5.3-1.4-2.3-2.2-4-2.2-5.3 0-1.3.9-2.3 2.2-2.3Z';
 async function buildExport(sel, mode) {
-  const W = 816, H = 1056, M = 40, CW = W - 2 * M, FOOT = 26, PAGE_H = H - 2 * M - FOOT;
+  const H = 1056, M = 40, FOOT = 26, PAGE_H = H - 2 * M - FOOT;
+  // Images can be as wide as the bracket needs, so it is drawn full size instead of shrunk to letter width
+  let W = 816;
+  {
+    const Bx = resolveBracket();
+    if (mode === 'image' && Bx && sel !== 'pool') {
+      const n = Bx.rounds.length, bw = Bx.format === 'single' ? n * 186 + (n - 1) * 30 : n * 186 + (n - 1) * 16;
+      W = Math.max(W, Math.min(2400, bw + 2 * M));
+    }
+  }
+  const CW = W - 2 * M;
   const P = profileOf(), accent = P.cause ? '#d81b7a' : '#0a2342';
   const FD = '"Big Shoulders Display", Impact, "Arial Narrow", sans-serif', FB = 'Barlow, "Segoe UI", Roboto, Arial, sans-serif', FL = '"Barlow Condensed", "Arial Narrow", Arial, sans-serif';
   try { await Promise.all([`900 30px ${FD}`, `800 16px ${FD}`, `600 12px ${FB}`, `700 12px ${FB}`, `600 11px ${FL}`, `700 11px ${FL}`].map(f => document.fonts.load(f))); } catch (e) { /* use fallbacks */ }
@@ -1248,7 +1258,7 @@ async function buildExport(sel, mode) {
 
   if (mode === 'image') {
     const total = blocks.reduce((a, b) => a + b.h, 0) + 2 * M + FOOT;
-    const scale = Math.min(2, Math.sqrt(16e6 / (W * total)));
+    const scale = Math.min(3, Math.sqrt(16e6 / (W * total)));
     let y = 0; const list = blocks.map(b => { const o = { b, y }; y += b.h; return o; });
     return [paint(W, total, scale, list, total - M - FOOT + 6, 1, 1)];
   }
